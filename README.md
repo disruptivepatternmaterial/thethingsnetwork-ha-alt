@@ -22,13 +22,36 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
-## Field defaults and device names
+## Field mappings and device names
 
-Without `_sensor_attr` in your TTN decoder, built-in defaults apply for common Dragino/RAK field names (`Hum_SHT31` → humidity, `BatV` → voltage, etc.). Edit `custom_components/thethingsnetwork_alt/field_defaults.py` to add more.
+Without `_sensor_attr` in your TTN decoder, edit these JSON files in the integration folder (via HACS install path or fork):
 
-Device friendly names come from `custom_components/thethingsnetwork_alt/device_names.json` (TTN `device_id` → display name). Edit that file for your fleet, update via HACS, and restart — names are applied to existing devices on startup.
+- `field_mappings.json` — TTN field name → HA entity type, units, friendly names
+- `device_names.json` — TTN device ID → friendly device name
 
-**Existing entities keep old names/units.** Remove the integration, delete its devices from Settings → Devices, update via HACS, restart, then add the integration again.
+Example `field_mappings.json` entry for Milesight VS370 occupancy:
+
+```json
+"occupancy": {
+  "platform": "binary_sensor",
+  "friendly_name": "Occupancy",
+  "device_class": "occupancy",
+  "state_on": ["occupied"],
+  "state_off": ["vacant"]
+}
+```
+
+Use `"platform": "binary_sensor"` for on/off fields that arrive as strings or numbers. Sensor fields omit `platform` (default).
+
+After editing, update via HACS and restart. Delete stale entities if a field moved from sensor to binary_sensor.
+
+## Field defaults (legacy note)
+
+Without `_sensor_attr` in your TTN decoder, built-in defaults in `field_mappings.json` apply for common Dragino/RAK/VS370 field names. Edit that file to add more.
+
+Device friendly names come from `device_names.json`. Edit that file for your fleet, update via HACS, and restart — names are applied to existing devices on startup.
+
+**Existing entities keep old names/units.** Remove the integration, delete its devices from Settings → Devices, update via HACS, restart, then add the integration again — or delete individual stale entities when platform changes (e.g. occupancy sensor → binary_sensor).
 
 ## Decoder metadata (optional override)
 

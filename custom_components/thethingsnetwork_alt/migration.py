@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import CONF_APP_ID, DOMAIN
-from .field_defaults import merge_field_attr
+from .field_defaults import merge_field_attr, reload_field_mappings
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ async def update_registered_entity_metadata(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
     """Apply field defaults and device names to existing registry entries."""
+    reload_field_mappings()
+
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
 
@@ -79,7 +81,7 @@ async def update_registered_entity_metadata(
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry, entry.entry_id
     ):
-        if entity_entry.domain != "sensor":
+        if entity_entry.domain not in ("sensor", "binary_sensor"):
             continue
 
         if not entity_entry.device_id or not (

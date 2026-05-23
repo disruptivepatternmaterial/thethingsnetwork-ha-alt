@@ -1,0 +1,171 @@
+{
+  "tempc_sht31": {
+    "friendly_name": "Temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_sht": {
+    "friendly_name": "Temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_ds18b20": {
+    "friendly_name": "Probe temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_ds": {
+    "friendly_name": "Probe temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "hum_sht31": {
+    "friendly_name": "Relative humidity",
+    "unit": "%",
+    "device_class": "humidity",
+    "state_class": "measurement"
+  },
+  "hum_sht": {
+    "friendly_name": "Relative humidity",
+    "unit": "%",
+    "device_class": "humidity",
+    "state_class": "measurement"
+  },
+  "batv": {
+    "friendly_name": "Battery voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "bat": {
+    "friendly_name": "Battery voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "battery": {
+    "friendly_name": "Battery",
+    "unit": "%",
+    "device_class": "battery",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "batt_capacity": {
+    "friendly_name": "Battery capacity",
+    "unit": "%",
+    "device_class": "battery",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "batt_voltage": {
+    "friendly_name": "Battery voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "distance": {
+    "friendly_name": "Distance",
+    "unit": "m",
+    "device_class": "distance",
+    "state_class": "measurement"
+  },
+  "distance_mm": {
+    "friendly_name": "Distance",
+    "unit": "mm",
+    "device_class": "distance",
+    "state_class": "measurement"
+  },
+  "wx_temperature": {
+    "friendly_name": "Temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "wx_humidity": {
+    "friendly_name": "Relative humidity",
+    "unit": "%",
+    "device_class": "humidity",
+    "state_class": "measurement"
+  },
+  "wx_barometer": {
+    "friendly_name": "Barometric pressure",
+    "unit": "hPa",
+    "device_class": "pressure",
+    "state_class": "measurement"
+  },
+  "barometer_5": {
+    "friendly_name": "Barometric pressure",
+    "unit": "hPa",
+    "device_class": "pressure",
+    "state_class": "measurement"
+  },
+  "barometer": {
+    "friendly_name": "Barometric pressure",
+    "unit": "hPa",
+    "device_class": "pressure",
+    "state_class": "measurement"
+  },
+  "wx_wind_speed": {
+    "friendly_name": "Wind speed",
+    "unit": "m/s",
+    "device_class": "wind_speed",
+    "state_class": "measurement"
+  },
+  "wx_wind_direction": {
+    "friendly_name": "Wind direction",
+    "unit": "°",
+    "device_class": "wind_direction",
+    "state_class": "measurement"
+  },
+  "hub_voltage": {
+    "friendly_name": "Hub voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "data_time": {
+    "friendly_name": "Device timestamp",
+    "device_class": "timestamp",
+    "entity_category": "diagnostic"
+  },
+  "timestamp": {
+    "friendly_name": "Device timestamp",
+    "device_class": "timestamp",
+    "entity_category": "diagnostic"
+  },
+  "systimestamp": {
+    "friendly_name": "Device timestamp",
+    "device_class": "timestamp",
+    "entity_category": "diagnostic"
+  },
+  "occupancy": {
+    "platform": "binary_sensor",
+    "friendly_name": "Occupancy",
+    "device_class": "occupancy",
+    "state_on": ["occupied", "on", "yes", "1", 1, true],
+    "state_off": ["vacant", "off", "no", "0", 0, false]
+  },
+  "door_status": {
+    "platform": "binary_sensor",
+    "friendly_name": "Door",
+    "device_class": "door",
+    "state_on": ["open", "OPEN"],
+    "state_off": ["close", "CLOSE", "closed", "CLOSED"]
+  },
+  "exti_trigger": {
+    "platform": "binary_sensor",
+    "friendly_name": "External trigger",
+    "device_class": "opening"
+  },
+  "illuminance": {
+    "friendly_name": "Illuminance level"
+  }
+}

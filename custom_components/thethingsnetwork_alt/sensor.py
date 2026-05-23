@@ -20,7 +20,12 @@ from homeassistant.helpers.typing import StateType
 from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
-from .field_defaults import SensorAttrDict, merge_field_attr
+from .field_defaults import (
+    SensorAttrDict,
+    get_field_platform,
+    merge_field_attr,
+    reload_field_mappings,
+)
 from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
@@ -148,6 +153,9 @@ async def async_setup_entry(
                     continue
 
                 if not isinstance(ttn_value, TTNSensorValue):
+                    continue
+
+                if get_field_platform(field_id) == "binary_sensor":
                     continue
 
                 attr = merge_field_attr(sensor_attr.get(field_id, {}), field_id)
