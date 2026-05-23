@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import PLATFORMS, TTN_API_HOST
 from .coordinator import TTNConfigEntry, TTNCoordinator
+from .migration import update_registered_entity_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    await update_registered_entity_metadata(hass, entry)
 
     return True
 

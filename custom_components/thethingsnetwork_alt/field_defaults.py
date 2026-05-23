@@ -98,6 +98,18 @@ FIELD_DEFAULTS: dict[str, SensorAttrDict] = {
         "state_class": "measurement",
         "friendly_name": "Barometric pressure",
     },
+    "barometer_5": {
+        "unit": "hPa",
+        "device_class": "pressure",
+        "state_class": "measurement",
+        "friendly_name": "Barometric pressure",
+    },
+    "barometer": {
+        "unit": "hPa",
+        "device_class": "pressure",
+        "state_class": "measurement",
+        "friendly_name": "Barometric pressure",
+    },
     "wx_wind_speed": {
         "unit": "m/s",
         "device_class": "wind_speed",
