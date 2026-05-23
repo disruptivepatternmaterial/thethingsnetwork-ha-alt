@@ -1,4 +1,4 @@
-"""Update existing entity registry entries when field defaults change."""
+"""Update existing entity and device registry entries when defaults change."""
 
 from __future__ import annotations
 
@@ -15,17 +15,10 @@ from .metadata import get_device_name
 _LOGGER = logging.getLogger(__name__)
 
 
-def _ttn_device_id(
-    device_registry: dr.DeviceRegistry,
-    device_id: str | None,
-    app_id: str,
-) -> str | None:
-    if not device_id or not (device := device_registry.async_get(device_id)):
-        return None
-
-    for item in device.identifiers:
-        if item[0] == DOMAIN and item[1].startswith(f"{app_id}_"):
-            return item[1][len(f"{app_id}_") :]
+def _ttn_device_id_from_identifier(identifier: str, app_id: str) -> str | None:
+    prefix = f"{app_id}_"
+    if identifier.startswith(prefix):
+        return identifier[len(prefix) :]
     return None
 
 
@@ -38,23 +31,74 @@ def _field_id_from_unique_id(unique_id: str | None, device_id: str) -> str | Non
     return None
 
 
+def _update_registered_device_names(
+    device_registry: dr.DeviceRegistry,
+    entry: ConfigEntry,
+) -> None:
+    """Rename TTN devices using device_names.json."""
+    app_id = entry.data[CONF_APP_ID]
+
+    for device in device_registry.devices.values():
+        if entry.entry_id not in device.config_entries:
+            continue
+
+        ttn_device_id: str | None = None
+        for domain, identifier in device.identifiers:
+            if domain != DOMAIN:
+                continue
+            ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
+            if ttn_device_id:
+                break
+
+        if not ttn_device_id:
+            continue
+
+        friendly_name = get_device_name(ttn_device_id)
+        if not friendly_name or device.name == friendly_name:
+            continue
+
+        device_registry.async_update_device(device.id, name=friendly_name)
+        _LOGGER.info(
+            "Renamed TTN device %s to %s",
+            ttn_device_id,
+            friendly_name,
+        )
+
+
 async def update_registered_entity_metadata(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Apply field defaults and device names to entities already in the registry."""
+    """Apply field defaults and device names to existing registry entries."""
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
+
+    _update_registered_device_names(device_registry, entry)
+
     app_id = entry.data[CONF_APP_ID]
 
-    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+    for entity_entry in er.async_entries_for_config_entry(
+        entity_registry, entry.entry_id
+    ):
         if entity_entry.domain != "sensor":
             continue
 
-        device_id = _ttn_device_id(device_registry, entity_entry.device_id, app_id)
-        if not device_id:
+        if not entity_entry.device_id or not (
+            device := device_registry.async_get(entity_entry.device_id)
+        ):
             continue
 
-        field_id = _field_id_from_unique_id(entity_entry.unique_id, device_id)
+        ttn_device_id: str | None = None
+        for domain, identifier in device.identifiers:
+            if domain != DOMAIN:
+                continue
+            ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
+            if ttn_device_id:
+                break
+
+        if not ttn_device_id:
+            continue
+
+        field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
         if not field_id:
             continue
 
@@ -88,12 +132,3 @@ async def update_registered_entity_metadata(
                 updates,
             )
             entity_registry.async_update_entity(entity_entry.entity_id, **updates)
-
-        if device_name := get_device_name(device_id):
-            if entity_entry.device_id and (
-                device := device_registry.async_get(entity_entry.device_id)
-            ):
-                if device.name != device_name:
-                    device_registry.async_update_device(
-                        entity_entry.device_id, name=device_name
-                    )
