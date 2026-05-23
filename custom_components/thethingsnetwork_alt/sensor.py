@@ -22,6 +22,7 @@ from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
 from .field_defaults import SensorAttrDict, merge_field_attr
 from .metadata import get_device_name
+from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -212,7 +213,17 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         if friendly_name := attr.get("friendly_name"):
             self._attr_name = friendly_name
 
+        self._parse_timestamp = (
+            self._attr_device_class == SensorDeviceClass.TIMESTAMP
+            or is_timestamp_field(ttn_value.field_id)
+        )
+        if self._parse_timestamp and self._attr_device_class != SensorDeviceClass.TIMESTAMP:
+            self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
     @property
     def native_value(self) -> StateType:
         """Return the current sensor value."""
-        return self._ttn_value.value
+        value = self._ttn_value.value
+        if self._parse_timestamp:
+            return parse_ttn_timestamp(value)
+        return value

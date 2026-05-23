@@ -117,6 +117,21 @@ FIELD_DEFAULTS: dict[str, SensorAttrDict] = {
         "entity_category": "diagnostic",
         "friendly_name": "Hub voltage",
     },
+    "data_time": {
+        "device_class": "timestamp",
+        "entity_category": "diagnostic",
+        "friendly_name": "Device timestamp",
+    },
+    "timestamp": {
+        "device_class": "timestamp",
+        "entity_category": "diagnostic",
+        "friendly_name": "Device timestamp",
+    },
+    "systimestamp": {
+        "device_class": "timestamp",
+        "entity_category": "diagnostic",
+        "friendly_name": "Device timestamp",
+    },
 }
 
 
