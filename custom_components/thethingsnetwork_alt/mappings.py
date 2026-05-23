@@ -53,6 +53,23 @@ def _normalize_state_values(raw: object) -> list[str | int | bool]:
     return [raw]
 
 
+def _mapping_from_entry(entry: dict) -> FieldMappingDict | None:
+    """Build a FieldMappingDict from one JSON entry (without keys)."""
+    keys = entry.get("keys")
+    if not keys:
+        _LOGGER.warning("field_mappings entry missing keys: %s", entry)
+        return None
+
+    mapping: FieldMappingDict = {
+        k: v for k, v in entry.items() if k != "keys" and not str(k).startswith("_")
+    }
+    if "state_on" in mapping:
+        mapping["state_on"] = _normalize_state_values(mapping["state_on"])
+    if "state_off" in mapping:
+        mapping["state_off"] = _normalize_state_values(mapping["state_off"])
+    return mapping
+
+
 def _load_field_mappings() -> dict[str, FieldMappingDict]:
     global _FIELD_MAPPINGS  # noqa: PLW0603
     if _FIELD_MAPPINGS is not None:
@@ -70,23 +87,37 @@ def _load_field_mappings() -> dict[str, FieldMappingDict]:
         _FIELD_MAPPINGS = {}
         return _FIELD_MAPPINGS
 
-    if not isinstance(raw, dict):
-        _LOGGER.warning("field_mappings.json must be a JSON object")
-        _FIELD_MAPPINGS = {}
-        return _FIELD_MAPPINGS
-
     mappings: dict[str, FieldMappingDict] = {}
-    for key, value in raw.items():
-        if not isinstance(value, dict):
-            continue
-        if str(key).startswith("_"):
-            continue
-        mapping = dict(value)
-        if "state_on" in mapping:
-            mapping["state_on"] = _normalize_state_values(mapping["state_on"])
-        if "state_off" in mapping:
-            mapping["state_off"] = _normalize_state_values(mapping["state_off"])
-        mappings[str(key).lower()] = mapping
+
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            mapping = _mapping_from_entry(entry)
+            if not mapping:
+                continue
+            keys = entry.get("keys", [])
+            if not isinstance(keys, list):
+                continue
+            for key in keys:
+                mappings[str(key).lower()] = dict(mapping)
+    elif isinstance(raw, dict):
+        # Legacy: { "field_name": { ...metadata } }
+        for key, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            if str(key).startswith("_"):
+                continue
+            mapping = dict(value)
+            if "state_on" in mapping:
+                mapping["state_on"] = _normalize_state_values(mapping["state_on"])
+            if "state_off" in mapping:
+                mapping["state_off"] = _normalize_state_values(mapping["state_off"])
+            mappings[str(key).lower()] = mapping
+    else:
+        _LOGGER.warning(
+            "field_mappings.json must be a JSON array of mappings or a legacy object"
+        )
 
     _FIELD_MAPPINGS = mappings
     return _FIELD_MAPPINGS
