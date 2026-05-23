@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Final, TypedDict, TypeVar, cast
+from typing import Final, TypeVar, cast
 
 from ttn_client import TTNSensorAttribute, TTNSensorValue
 
@@ -20,6 +20,8 @@ from homeassistant.helpers.typing import StateType
 from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
+from .field_defaults import SensorAttrDict, merge_field_attr
+from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,17 +38,6 @@ _ATTR_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 EnumT = TypeVar("EnumT", SensorDeviceClass, SensorStateClass, EntityCategory)
-
-
-class SensorAttrDict(TypedDict, total=False):
-    """Decoded optional sensor attributes from TTN."""
-
-    unit: str
-    device_class: str
-    state_class: str
-    entity_category: str
-    suggested_display_precision: str
-    friendly_name: str
 
 
 VALID_DEVICE_CLASSES: Final[frozenset[str]] = frozenset(
@@ -158,7 +149,7 @@ async def async_setup_entry(
                 if not isinstance(ttn_value, TTNSensorValue):
                     continue
 
-                attr = sensor_attr.get(field_id, {})
+                attr = merge_field_attr(sensor_attr.get(field_id, {}), field_id)
                 _validate_sensor_attr(attr, field_id, device_id=device_id)
 
                 new_sensors[(device_id, field_id)] = TtnDataSensor(
@@ -166,6 +157,7 @@ async def async_setup_entry(
                     app_id=entry.data[CONF_APP_ID],
                     ttn_value=ttn_value,
                     attr=attr,
+                    device_name=get_device_name(device_id),
                 )
 
         if new_sensors:
@@ -188,9 +180,10 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         app_id: str,
         ttn_value: TTNSensorValue,
         attr: SensorAttrDict,
+        device_name: str | None = None,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, app_id, ttn_value)
+        super().__init__(coordinator, app_id, ttn_value, device_name=device_name)
         self._ttn_value = ttn_value
 
         if unit := attr.get("unit"):

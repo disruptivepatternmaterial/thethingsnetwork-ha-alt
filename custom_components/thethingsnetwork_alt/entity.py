@@ -25,6 +25,7 @@ class TTNEntity(CoordinatorEntity[TTNCoordinator]):
         coordinator: TTNCoordinator,
         app_id: str,
         ttn_value: TTNBaseValue,
+        device_name: str | None = None,
     ) -> None:
         """Initialize a The Things Network entity."""
         super().__init__(coordinator)
@@ -36,7 +37,7 @@ class TTNEntity(CoordinatorEntity[TTNCoordinator]):
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{app_id}_{self.device_id}")},
-            name=self.device_id,
+            name=device_name or self.device_id,
         )
 
     @callback

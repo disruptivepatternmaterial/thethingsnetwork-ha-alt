@@ -22,7 +22,15 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
-## Decoder metadata
+## Field defaults and device names
+
+Without `_sensor_attr` in your TTN decoder, built-in defaults apply for common Dragino/RAK field names (`Hum_SHT31` → humidity, `BatV` → voltage, etc.). Edit `custom_components/thethingsnetwork_alt/field_defaults.py` to add more.
+
+Device friendly names come from `custom_components/thethingsnetwork_alt/device_names.json` (TTN `device_id` → display name). Edit that file for your fleet.
+
+**Existing entities keep old names/units.** Remove the integration, delete its devices from Settings → Devices, update via HACS, restart, then add the integration again.
+
+## Decoder metadata (optional override)
 
 Add a `_sensor_attr` object to your TTN payload formatter output:
 
