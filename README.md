@@ -17,7 +17,7 @@ Same as the official integration:
 ## HACS install
 
 1. HACS → Integrations → ⋮ → Custom repositories
-2. Add `https://github.com/ntableman/thethingsnetwork-ha-alt`, category **Integration**
+2. Add `https://github.com/disruptivepatternmaterial/thethingsnetwork-ha-alt`, category **Integration**
 3. Search **The Things Network HA-Alt** → Download
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
