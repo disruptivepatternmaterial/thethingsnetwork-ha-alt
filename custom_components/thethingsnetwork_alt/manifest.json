@@ -1,0 +1,12 @@
+{
+  "domain": "thethingsnetwork_alt",
+  "name": "The Things Network HA-Alt",
+  "codeowners": ["@ntableman"],
+  "config_flow": true,
+  "documentation": "https://github.com/ntableman/thethingsnetwork-ha-alt",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/ntableman/thethingsnetwork-ha-alt/issues",
+  "requirements": ["ttn_client==1.3.0"],
+  "version": "0.1.0"
+}
