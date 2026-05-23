@@ -79,6 +79,8 @@ def _load_field_mappings() -> dict[str, FieldMappingDict]:
     for key, value in raw.items():
         if not isinstance(value, dict):
             continue
+        if str(key).startswith("_"):
+            continue
         mapping = dict(value)
         if "state_on" in mapping:
             mapping["state_on"] = _normalize_state_values(mapping["state_on"])

@@ -1,4 +1,6 @@
 {
+  "_about": "TTN decoded_payload field name (lowercase key) → HA entity. Edit, HACS update, restart. See FIELD_MAPPINGS.md.",
+
   "tempc_sht31": {
     "friendly_name": "Temperature",
     "unit": "°C",
@@ -6,6 +8,12 @@
     "state_class": "measurement"
   },
   "tempc_sht": {
+    "friendly_name": "Temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_sht41": {
     "friendly_name": "Temperature",
     "unit": "°C",
     "device_class": "temperature",
@@ -23,6 +31,31 @@
     "device_class": "temperature",
     "state_class": "measurement"
   },
+  "tempc_black": {
+    "friendly_name": "Black surface temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_red": {
+    "friendly_name": "Red surface temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "tempc_white": {
+    "friendly_name": "White surface temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+  "temperature_c": {
+    "friendly_name": "Temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+  },
+
   "hum_sht31": {
     "friendly_name": "Relative humidity",
     "unit": "%",
@@ -35,6 +68,19 @@
     "device_class": "humidity",
     "state_class": "measurement"
   },
+  "hum_sht41": {
+    "friendly_name": "Relative humidity",
+    "unit": "%",
+    "device_class": "humidity",
+    "state_class": "measurement"
+  },
+  "humidity_rh": {
+    "friendly_name": "Relative humidity",
+    "unit": "%",
+    "device_class": "humidity",
+    "state_class": "measurement"
+  },
+
   "batv": {
     "friendly_name": "Battery voltage",
     "unit": "V",
@@ -56,6 +102,13 @@
     "state_class": "measurement",
     "entity_category": "diagnostic"
   },
+  "battery_voltage_v": {
+    "friendly_name": "Battery voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
   "batt_capacity": {
     "friendly_name": "Battery capacity",
     "unit": "%",
@@ -70,18 +123,41 @@
     "state_class": "measurement",
     "entity_category": "diagnostic"
   },
-  "distance": {
-    "friendly_name": "Distance",
-    "unit": "m",
-    "device_class": "distance",
-    "state_class": "measurement"
+  "batt_current": {
+    "friendly_name": "Battery current",
+    "unit": "A",
+    "device_class": "current",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
   },
-  "distance_mm": {
-    "friendly_name": "Distance",
+  "batt_temperature": {
+    "friendly_name": "Battery temperature",
+    "unit": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+  "hub_voltage": {
+    "friendly_name": "Hub voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic"
+  },
+
+  "distance": {
+    "friendly_name": "Snow depth",
     "unit": "mm",
     "device_class": "distance",
     "state_class": "measurement"
   },
+  "distance_mm": {
+    "friendly_name": "Snow depth",
+    "unit": "mm",
+    "device_class": "distance",
+    "state_class": "measurement"
+  },
+
   "wx_temperature": {
     "friendly_name": "Temperature",
     "unit": "°C",
@@ -124,13 +200,19 @@
     "device_class": "wind_direction",
     "state_class": "measurement"
   },
-  "hub_voltage": {
-    "friendly_name": "Hub voltage",
-    "unit": "V",
-    "device_class": "voltage",
-    "state_class": "measurement",
-    "entity_category": "diagnostic"
+
+  "si_value_m_s": {
+    "friendly_name": "Seismic intensity",
+    "unit": "m/s",
+    "state_class": "measurement"
   },
+  "pga_m_s2": {
+    "friendly_name": "Peak ground acceleration",
+    "unit": "m/s²",
+    "device_class": "acceleration",
+    "state_class": "measurement"
+  },
+
   "data_time": {
     "friendly_name": "Device timestamp",
     "device_class": "timestamp",
@@ -146,12 +228,13 @@
     "device_class": "timestamp",
     "entity_category": "diagnostic"
   },
+
   "occupancy": {
     "platform": "binary_sensor",
     "friendly_name": "Occupancy",
     "device_class": "occupancy",
-    "state_on": ["occupied", "on", "yes", "1", 1, true],
-    "state_off": ["vacant", "off", "no", "0", 0, false]
+    "state_on": ["occupied"],
+    "state_off": ["vacant"]
   },
   "door_status": {
     "platform": "binary_sensor",
@@ -160,12 +243,102 @@
     "state_on": ["open", "OPEN"],
     "state_off": ["close", "CLOSE", "closed", "CLOSED"]
   },
+  "door_open_status": {
+    "platform": "binary_sensor",
+    "friendly_name": "Door",
+    "device_class": "door",
+    "state_on": ["OPEN"],
+    "state_off": ["CLOSE"]
+  },
+  "door1_open_status": {
+    "platform": "binary_sensor",
+    "friendly_name": "Door 1",
+    "device_class": "door",
+    "state_on": ["OPEN"],
+    "state_off": ["CLOSE"]
+  },
+  "door2_open_status": {
+    "platform": "binary_sensor",
+    "friendly_name": "Door 2",
+    "device_class": "door",
+    "state_on": ["OPEN"],
+    "state_off": ["CLOSE"]
+  },
   "exti_trigger": {
     "platform": "binary_sensor",
     "friendly_name": "External trigger",
     "device_class": "opening"
   },
+  "alarm": {
+    "platform": "binary_sensor",
+    "friendly_name": "Alarm",
+    "device_class": "problem"
+  },
+  "alarm1": {
+    "platform": "binary_sensor",
+    "friendly_name": "Alarm 1",
+    "device_class": "problem"
+  },
+  "alarm2": {
+    "platform": "binary_sensor",
+    "friendly_name": "Alarm 2",
+    "device_class": "problem"
+  },
+  "button_pressed": {
+    "platform": "binary_sensor",
+    "friendly_name": "Button pressed",
+    "device_class": "running"
+  },
+  "earthquake_active": {
+    "platform": "binary_sensor",
+    "friendly_name": "Earthquake active",
+    "device_class": "vibration"
+  },
+  "shutoff_alert": {
+    "platform": "binary_sensor",
+    "friendly_name": "Shutoff alert",
+    "device_class": "problem"
+  },
+  "collapse_alert": {
+    "platform": "binary_sensor",
+    "friendly_name": "Collapse alert",
+    "device_class": "problem"
+  },
+
   "illuminance": {
     "friendly_name": "Illuminance level"
+  },
+  "ill_lx": {
+    "friendly_name": "Illuminance",
+    "unit": "lx",
+    "device_class": "illuminance",
+    "state_class": "measurement"
+  },
+  "adc_v": {
+    "friendly_name": "ADC voltage",
+    "unit": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+  },
+  "door_open_times": {
+    "friendly_name": "Door open count",
+    "state_class": "total_increasing"
+  },
+  "last_door_open_duration": {
+    "friendly_name": "Last door open duration",
+    "unit": "s",
+    "state_class": "measurement"
+  },
+  "rak_serial": {
+    "friendly_name": "RAK serial",
+    "entity_category": "diagnostic"
+  },
+  "node_type": {
+    "friendly_name": "Node type",
+    "entity_category": "diagnostic"
+  },
+  "firmware_version": {
+    "friendly_name": "Firmware version",
+    "entity_category": "diagnostic"
   }
 }
