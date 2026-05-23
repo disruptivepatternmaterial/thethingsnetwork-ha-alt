@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Final, TypeVar, cast
+from typing import Final
 
 from ttn_client import TTNSensorAttribute, TTNSensorValue
 
@@ -20,31 +20,12 @@ from homeassistant.helpers.typing import StateType
 from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
-from .field_defaults import (
-    SensorAttrDict,
-    get_field_platform,
-    merge_field_attr,
-    reload_field_mappings,
-)
+from .field_defaults import SensorAttrDict, get_field_platform, merge_field_attr
+from .helpers import extract_sensor_attr, parse_enum
 from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
 _LOGGER = logging.getLogger(__name__)
-
-_SENSOR_ATTR_PREFIX: Final = "_sensor_attr_"
-_ATTR_KEYS: Final[frozenset[str]] = frozenset(
-    {
-        "unit",
-        "device_class",
-        "state_class",
-        "entity_category",
-        "suggested_display_precision",
-        "friendly_name",
-    }
-)
-
-EnumT = TypeVar("EnumT", SensorDeviceClass, SensorStateClass, EntityCategory)
-
 
 VALID_DEVICE_CLASSES: Final[frozenset[str]] = frozenset(
     item.value for item in SensorDeviceClass
@@ -55,45 +36,6 @@ VALID_STATE_CLASSES: Final[frozenset[str]] = frozenset(
 VALID_ENTITY_CATEGORIES: Final[frozenset[str]] = frozenset(
     item.value for item in EntityCategory
 )
-
-
-def _parse_enum(enum_cls: type[EnumT], raw: object | None) -> EnumT | None:
-    """Parse a raw decoder value into a Home Assistant enum."""
-    if raw is None:
-        return None
-
-    try:
-        return enum_cls(str(raw))
-    except (ValueError, TypeError):
-        return None
-
-
-def _extract_sensor_attr(
-    fields: dict[str, object],
-) -> dict[str, SensorAttrDict]:
-    """Extract flattened TTN sensor attribute keys into a nested dict."""
-    sensor_attr: dict[str, SensorAttrDict] = {}
-
-    for key, value in fields.items():
-        if not isinstance(value, TTNSensorAttribute):
-            continue
-
-        if not key.startswith(_SENSOR_ATTR_PREFIX):
-            continue
-
-        remainder = key[len(_SENSOR_ATTR_PREFIX) :]
-
-        for attr_key in _ATTR_KEYS:
-            if not remainder.endswith(f"_{attr_key}"):
-                continue
-
-            field_name = remainder[: -(len(attr_key) + 1)]
-            cast(dict[str, str], sensor_attr.setdefault(field_name, {}))[attr_key] = (
-                str(value.value)
-            )
-            break
-
-    return sensor_attr
 
 
 def _validate_sensor_attr(
@@ -137,10 +79,13 @@ async def async_setup_entry(
     def _async_measurement_listener() -> None:
         """Create new entities for newly discovered TTN values."""
         data = coordinator.data
+        if not data:
+            return
+
         new_sensors: dict[tuple[str, str], TtnDataSensor] = {}
 
         for device_id, device_uplinks in data.items():
-            sensor_attr = _extract_sensor_attr(device_uplinks)
+            sensor_attr = extract_sensor_attr(device_uplinks)
 
             for field_id, ttn_value in device_uplinks.items():
                 if (device_id, field_id) in sensors:
@@ -198,13 +143,13 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         if unit := attr.get("unit"):
             self._attr_native_unit_of_measurement = unit
 
-        if device_class := _parse_enum(SensorDeviceClass, attr.get("device_class")):
+        if device_class := parse_enum(SensorDeviceClass, attr.get("device_class")):
             self._attr_device_class = device_class
 
-        if state_class := _parse_enum(SensorStateClass, attr.get("state_class")):
+        if state_class := parse_enum(SensorStateClass, attr.get("state_class")):
             self._attr_state_class = state_class
 
-        if entity_category := _parse_enum(EntityCategory, attr.get("entity_category")):
+        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
             self._attr_entity_category = entity_category
 
         if precision := attr.get("suggested_display_precision"):

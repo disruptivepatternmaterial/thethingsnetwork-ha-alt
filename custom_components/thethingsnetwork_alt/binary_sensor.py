@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import TypeVar
 
 from ttn_client import TTNBinarySensorValue, TTNSensorAttribute, TTNSensorValue
 
@@ -19,12 +18,10 @@ from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
 from .field_defaults import FieldMappingDict, get_field_platform, merge_field_attr, value_is_on
+from .helpers import extract_sensor_attr, parse_enum
 from .metadata import get_device_name
-from .sensor import _extract_sensor_attr, _parse_enum
 
 _LOGGER = logging.getLogger(__name__)
-
-EnumT = TypeVar("EnumT", BinarySensorDeviceClass, EntityCategory)
 
 
 async def async_setup_entry(
@@ -38,10 +35,13 @@ async def async_setup_entry(
 
     def _async_measurement_listener() -> None:
         data = coordinator.data
+        if not data:
+            return
+
         new_sensors: dict[tuple[str, str], TtnDataBinarySensor] = {}
 
         for device_id, device_uplinks in data.items():
-            sensor_attr = _extract_sensor_attr(device_uplinks)
+            sensor_attr = extract_sensor_attr(device_uplinks)
 
             for field_id, ttn_value in device_uplinks.items():
                 if (device_id, field_id) in sensors:
@@ -98,10 +98,10 @@ class TtnDataBinarySensor(TTNEntity, BinarySensorEntity):
         self._ttn_value = ttn_value
         self._attr = attr
 
-        if device_class := _parse_enum(BinarySensorDeviceClass, attr.get("device_class")):
+        if device_class := parse_enum(BinarySensorDeviceClass, attr.get("device_class")):
             self._attr_device_class = device_class
 
-        if entity_category := _parse_enum(EntityCategory, attr.get("entity_category")):
+        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
             self._attr_entity_category = entity_category
 
         if friendly_name := attr.get("friendly_name"):

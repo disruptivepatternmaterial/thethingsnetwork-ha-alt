@@ -29,7 +29,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    await update_registered_entity_metadata(hass, entry)
+    try:
+        await update_registered_entity_metadata(hass, entry)
+    except Exception:
+        _LOGGER.exception("TTN HA-Alt metadata migration failed")
 
     return True
 

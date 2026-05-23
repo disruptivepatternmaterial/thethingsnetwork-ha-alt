@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import CONF_APP_ID, DOMAIN
-from .field_defaults import merge_field_attr, reload_field_mappings
+from .field_defaults import get_field_platform, merge_field_attr, reload_field_mappings
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
+
+_VALID_SENSOR_DEVICE_CLASSES = frozenset(item.value for item in SensorDeviceClass)
+_VALID_BINARY_DEVICE_CLASSES = frozenset(
+    item.value for item in BinarySensorDeviceClass
+)
+_VALID_STATE_CLASSES = frozenset(item.value for item in SensorStateClass)
+_VALID_ENTITY_CATEGORIES = frozenset(item.value for item in EntityCategory)
 
 
 def _ttn_device_id_from_identifier(identifier: str, app_id: str) -> str | None:
@@ -84,53 +94,79 @@ async def update_registered_entity_metadata(
         if entity_entry.domain not in ("sensor", "binary_sensor"):
             continue
 
-        if not entity_entry.device_id or not (
-            device := device_registry.async_get(entity_entry.device_id)
-        ):
-            continue
-
-        ttn_device_id: str | None = None
-        for domain, identifier in device.identifiers:
-            if domain != DOMAIN:
+        try:
+            if not entity_entry.device_id or not (
+                device := device_registry.async_get(entity_entry.device_id)
+            ):
                 continue
-            ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
-            if ttn_device_id:
-                break
 
-        if not ttn_device_id:
-            continue
+            ttn_device_id: str | None = None
+            for domain, identifier in device.identifiers:
+                if domain != DOMAIN:
+                    continue
+                ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
+                if ttn_device_id:
+                    break
 
-        field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
-        if not field_id:
-            continue
+            if not ttn_device_id:
+                continue
 
-        attr = merge_field_attr({}, field_id)
-        updates: dict[str, str] = {}
+            field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
+            if not field_id:
+                continue
 
-        if device_class := attr.get("device_class"):
-            if entity_entry.device_class != device_class:
-                updates["device_class"] = device_class
+            attr = merge_field_attr({}, field_id)
+            mapped_platform = get_field_platform(field_id)
 
-        if unit := attr.get("unit"):
-            if entity_entry.unit_of_measurement != unit:
-                updates["unit_of_measurement"] = unit
+            if entity_entry.domain == "sensor" and mapped_platform == "binary_sensor":
+                continue
+            if entity_entry.domain == "binary_sensor" and mapped_platform != "binary_sensor":
+                continue
 
-        if state_class := attr.get("state_class"):
-            if entity_entry.state_class != state_class:
-                updates["state_class"] = state_class
+            updates: dict[str, str] = {}
 
-        if entity_category := attr.get("entity_category"):
-            if entity_entry.entity_category != entity_category:
-                updates["entity_category"] = entity_category
+            if friendly_name := attr.get("friendly_name"):
+                if entity_entry.name != friendly_name:
+                    updates["name"] = friendly_name
 
-        if friendly_name := attr.get("friendly_name"):
-            if entity_entry.name != friendly_name:
-                updates["name"] = friendly_name
+            if entity_category := attr.get("entity_category"):
+                if (
+                    entity_category in _VALID_ENTITY_CATEGORIES
+                    and entity_entry.entity_category != entity_category
+                ):
+                    updates["entity_category"] = entity_category
 
-        if updates:
-            _LOGGER.debug(
-                "Updating entity %s metadata: %s",
+            if device_class := attr.get("device_class"):
+                if entity_entry.domain == "sensor":
+                    if (
+                        device_class in _VALID_SENSOR_DEVICE_CLASSES
+                        and entity_entry.device_class != device_class
+                    ):
+                        updates["device_class"] = device_class
+                elif (
+                    device_class in _VALID_BINARY_DEVICE_CLASSES
+                    and entity_entry.device_class != device_class
+                ):
+                    updates["device_class"] = device_class
+
+            if entity_entry.domain == "sensor":
+                if unit := attr.get("unit"):
+                    if entity_entry.unit_of_measurement != unit:
+                        updates["unit_of_measurement"] = unit
+
+                if state_class := attr.get("state_class"):
+                    if (
+                        state_class in _VALID_STATE_CLASSES
+                        and entity_entry.state_class != state_class
+                    ):
+                        updates["state_class"] = state_class
+
+            if updates:
+                entity_registry.async_update_entity(
+                    entity_entry.entity_id, **updates
+                )
+        except Exception:
+            _LOGGER.exception(
+                "Failed to migrate entity metadata for %s",
                 entity_entry.entity_id,
-                updates,
             )
-            entity_registry.async_update_entity(entity_entry.entity_id, **updates)
