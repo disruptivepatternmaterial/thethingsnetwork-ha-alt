@@ -8,5 +8,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/disruptivepatternmaterial/thethingsnetwork-ha-alt/issues",
   "requirements": ["ttn_client==1.3.0"],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
