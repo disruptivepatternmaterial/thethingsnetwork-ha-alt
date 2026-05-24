@@ -11,9 +11,14 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .const import CONF_APP_ID, DOMAIN
-from .field_defaults import get_field_platform, merge_field_attr, reload_field_mappings
-from .metadata import get_device_name
+from .const import CONF_APP_ID, DOMAIN, _INTEGRATION_VERSION
+from .field_defaults import (
+    get_field_platform,
+    merge_field_attr,
+    reload_field_mappings,
+)
+from .mappings import _load_field_mappings
+from .metadata import get_device_name, load_device_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,6 +124,13 @@ async def update_registered_entity_metadata(
             mapped_platform = get_field_platform(field_id)
 
             if entity_entry.domain == "sensor" and mapped_platform == "binary_sensor":
+                _LOGGER.warning(
+                    "Removing stale sensor %s (%s is mapped to binary_sensor); "
+                    "it will be recreated on the next uplink",
+                    entity_entry.entity_id,
+                    field_id,
+                )
+                entity_registry.async_remove(entity_entry.entity_id)
                 continue
             if entity_entry.domain == "binary_sensor" and mapped_platform != "binary_sensor":
                 continue
@@ -162,6 +174,11 @@ async def update_registered_entity_metadata(
                         updates["state_class"] = state_class
 
             if updates:
+                _LOGGER.info(
+                    "Updated entity %s: %s",
+                    entity_entry.entity_id,
+                    updates,
+                )
                 entity_registry.async_update_entity(
                     entity_entry.entity_id, **updates
                 )

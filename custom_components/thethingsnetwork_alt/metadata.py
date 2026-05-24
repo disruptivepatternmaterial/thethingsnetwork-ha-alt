@@ -40,3 +40,8 @@ def _load_device_names() -> dict[str, str]:
 def get_device_name(device_id: str) -> str | None:
     """Return a friendly device name for a TTN end-device ID, if configured."""
     return _load_device_names().get(device_id)
+
+
+def load_device_names() -> dict[str, str]:
+    """Return all configured TTN device ID → friendly name mappings."""
+    return dict(_load_device_names())
