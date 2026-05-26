@@ -22,11 +22,21 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
-## Field mappings and device names
+## What you get out of the box (v0.5.0)
 
-Without `_sensor_attr` in your TTN decoder, edit these JSON files in the integration folder (via HACS install path or fork):
+- Sensors for every numeric / string / boolean field in `decoded_payload`.
+- Binary sensors for fields configured in `field_mappings.json` with `"platform": "binary_sensor"` (doors, occupancy, alarms, etc.).
+- **Lat / lon / altitude** sensors — automatically recognised from common field names (`latitude` / `longitude` / `lat` / `lon` / `lng` / `altitude` / `alt` / `gps_*`), and **also surfaced** when a decoder emits a nested GPS object (e.g. `{ "gps": { "latitude": 47.6, "longitude": -122.3 } }`) — these previously vanished silently.
+- **Per-device diagnostic sensors** — `RSSI` (dBm, signal_strength), `SNR` (dB), and `Last seen` (timestamp) — extracted from each uplink's `rx_metadata` / `received_at`. Useful for monitoring sensor health and gateway coverage.
+- **Auto-generated friendly names** for fields not explicitly mapped (snake_case → Title Case, with common suffix heuristics like `_mv`, `_ma`, `_c`, `_lux`, `_pct`, `_hpa`, `_dbm`, etc.).
+- **One-time INFO log** on startup listing every field per device, plus which are excluded and which lack an explicit mapping. Search Home Assistant logs for `TTN HA-Alt device=` after a restart.
 
-- `field_mappings.json` — TTN field name → HA entity type, units, friendly names
+## Field mappings, exclusions, and device names
+
+Three JSON files next to the integration code:
+
+- `field_mappings.json` — TTN field name → HA entity type, unit, device_class, friendly name
+- `field_exclusions.json` — TTN field names to **hide** from Home Assistant
 - `device_names.json` — TTN device ID → friendly device name
 
 Example `field_mappings.json` entry for Milesight VS370 occupancy:
@@ -44,6 +54,24 @@ Example `field_mappings.json` entry for Milesight VS370 occupancy:
 Use `"platform": "binary_sensor"` for on/off fields that arrive as strings or numbers. Sensor fields omit `platform` (default).
 
 After editing, update via HACS and restart. Delete stale entities if a field moved from sensor to binary_sensor.
+
+## Field exclusions
+
+Drop a `field_exclusions.json` next to `field_mappings.json` to hide fields you don't want as Home Assistant entities. Matched **case-insensitively** against TTN `decoded_payload` field names. Trailing `*` matches by prefix.
+
+```json
+{
+  "global": ["raw_payload", "debug_*"],
+  "devices": {
+    "muon-air-sensor-001": ["wx_wind_direction"],
+    "la666150458": ["adc_v"]
+  }
+}
+```
+
+You can also disable the synthetic diagnostic sensors per-device or globally by adding `_meta_rssi`, `_meta_snr`, or `_meta_last_seen` to the exclusion list.
+
+After editing, update via HACS and restart. To delete entities that are already in Home Assistant after excluding them, remove them from Settings → Devices & services → Entities.
 
 ## Field defaults (legacy note)
 

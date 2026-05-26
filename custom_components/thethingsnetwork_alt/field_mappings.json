@@ -244,5 +244,47 @@
     "entity_category": "diagnostic",
     "friendly_name": "Firmware version",
     "keys": ["firmware_version"]
+  },
+  {
+    "friendly_name": "Latitude",
+    "unit": "°",
+    "state_class": "measurement",
+    "suggested_display_precision": "5",
+    "keys": ["latitude", "lat", "gps_latitude"]
+  },
+  {
+    "friendly_name": "Longitude",
+    "unit": "°",
+    "state_class": "measurement",
+    "suggested_display_precision": "5",
+    "keys": ["longitude", "lon", "lng", "gps_longitude"]
+  },
+  {
+    "device_class": "distance",
+    "friendly_name": "Altitude",
+    "unit": "m",
+    "state_class": "measurement",
+    "keys": ["altitude", "alt", "gps_altitude"]
+  },
+  {
+    "device_class": "signal_strength",
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "RSSI",
+    "unit": "dBm",
+    "keys": ["_meta_rssi"]
+  },
+  {
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "SNR",
+    "unit": "dB",
+    "keys": ["_meta_snr"]
+  },
+  {
+    "device_class": "timestamp",
+    "entity_category": "diagnostic",
+    "friendly_name": "Last seen",
+    "keys": ["_meta_last_seen"]
   }
 ]

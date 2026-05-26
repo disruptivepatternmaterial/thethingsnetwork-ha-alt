@@ -13,6 +13,61 @@ PlatformType = Literal["sensor", "binary_sensor"]
 
 _FIELD_MAPPINGS: dict[str, FieldMappingDict] | None = None
 
+# Heuristic suffix → (unit, device_class, state_class) for unmapped fields.
+# Keep conservative: only suffixes that strongly imply a single physical
+# meaning. Applied case-insensitively after lowercasing the field_id.
+_SUFFIX_HEURISTICS: tuple[tuple[str, dict[str, str]], ...] = (
+    ("_mv", {"unit": "mV", "device_class": "voltage", "state_class": "measurement"}),
+    ("_uv", {"unit": "µV", "device_class": "voltage", "state_class": "measurement"}),
+    ("_v", {"unit": "V", "device_class": "voltage", "state_class": "measurement"}),
+    ("_ma", {"unit": "mA", "device_class": "current", "state_class": "measurement"}),
+    ("_a", {"unit": "A", "device_class": "current", "state_class": "measurement"}),
+    ("_lux", {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"}),
+    ("_lx", {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"}),
+    ("_pct", {"unit": "%", "state_class": "measurement"}),
+    ("_percent", {"unit": "%", "state_class": "measurement"}),
+    ("_hpa", {"unit": "hPa", "device_class": "pressure", "state_class": "measurement"}),
+    ("_pa", {"unit": "Pa", "device_class": "pressure", "state_class": "measurement"}),
+    ("_kpa", {"unit": "kPa", "device_class": "pressure", "state_class": "measurement"}),
+    ("_c", {"unit": "°C", "device_class": "temperature", "state_class": "measurement"}),
+    ("_f", {"unit": "°F", "device_class": "temperature", "state_class": "measurement"}),
+    ("_k", {"unit": "K", "device_class": "temperature", "state_class": "measurement"}),
+    ("_mm", {"unit": "mm", "device_class": "distance", "state_class": "measurement"}),
+    ("_cm", {"unit": "cm", "device_class": "distance", "state_class": "measurement"}),
+    ("_m", {"unit": "m", "device_class": "distance", "state_class": "measurement"}),
+    ("_km", {"unit": "km", "device_class": "distance", "state_class": "measurement"}),
+    ("_g", {"unit": "g", "device_class": "weight", "state_class": "measurement"}),
+    ("_kg", {"unit": "kg", "device_class": "weight", "state_class": "measurement"}),
+    ("_dbm", {"unit": "dBm", "device_class": "signal_strength", "state_class": "measurement"}),
+    ("_db", {"unit": "dB", "state_class": "measurement"}),
+)
+
+
+def _friendly_name_from_field_id(field_id: str) -> str:
+    """Convert a snake_case TTN field name into a Title Case friendly name."""
+    cleaned = field_id.replace("_", " ").strip()
+    if not cleaned:
+        return field_id
+    # Preserve common all-caps tokens.
+    parts = cleaned.split()
+    capitalised: list[str] = []
+    for part in parts:
+        upper = part.upper()
+        if upper in {"RSSI", "SNR", "GPS", "ID", "UV", "IR", "PM", "CO", "CO2", "VOC"}:
+            capitalised.append(upper)
+        else:
+            capitalised.append(part.capitalize())
+    return " ".join(capitalised)
+
+
+def _heuristic_for_field(field_id: str) -> dict[str, str]:
+    """Return inferred attrs based on a field_id suffix."""
+    lower = field_id.lower()
+    for suffix, attrs in _SUFFIX_HEURISTICS:
+        if lower.endswith(suffix) and len(lower) > len(suffix):
+            return dict(attrs)
+    return {}
+
 
 class FieldMappingDict(TypedDict, total=False):
     """Mapping from a TTN decoded_payload field to HA entity metadata."""
@@ -137,7 +192,7 @@ def get_field_platform(field_id: str) -> PlatformType:
 
 
 def default_field_attr(field_id: str) -> SensorAttrDict:
-    """Return built-in metadata for a TTN field name, if configured."""
+    """Return built-in metadata for a TTN field, falling back to heuristics."""
     mapping = get_field_mapping(field_id)
     attr: SensorAttrDict = {}
     for key in (
@@ -150,14 +205,38 @@ def default_field_attr(field_id: str) -> SensorAttrDict:
     ):
         if key in mapping:
             attr[key] = str(mapping[key])
+
+    if not attr:
+        # No explicit mapping → infer from suffix and synthesize a friendly name.
+        heuristic = _heuristic_for_field(field_id)
+        for key, value in heuristic.items():
+            attr[key] = value
+        attr.setdefault("friendly_name", _friendly_name_from_field_id(field_id))
+    elif "friendly_name" not in attr:
+        attr["friendly_name"] = _friendly_name_from_field_id(field_id)
+
     return attr
 
 
 def merge_field_attr(
     decoder_attr: SensorAttrDict, field_id: str
 ) -> FieldMappingDict:
-    """Merge file mapping with decoder-provided _sensor_attr (decoder wins)."""
-    merged: FieldMappingDict = get_field_mapping(field_id)
+    """Merge file mapping with decoder-provided _sensor_attr (decoder wins).
+
+    When the field is not in `field_mappings.json` and the decoder did not
+    provide a `_sensor_attr.<field>`, fall back to heuristics + an
+    auto-generated friendly name so unmapped fields still look reasonable.
+    """
+    file_mapping: FieldMappingDict = get_field_mapping(field_id)
+
+    if not file_mapping:
+        heuristic = _heuristic_for_field(field_id)
+        merged: FieldMappingDict = dict(heuristic)  # type: ignore[assignment]
+        merged.setdefault("friendly_name", _friendly_name_from_field_id(field_id))
+    else:
+        merged = dict(file_mapping)
+        merged.setdefault("friendly_name", _friendly_name_from_field_id(field_id))
+
     merged.update(decoder_attr)
     return merged
 

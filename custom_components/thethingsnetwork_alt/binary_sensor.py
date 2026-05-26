@@ -17,6 +17,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
+from .exclusions import is_excluded
 from .field_defaults import FieldMappingDict, get_field_platform, merge_field_attr, value_is_on
 from .helpers import extract_sensor_attr, parse_enum
 from .metadata import get_device_name
@@ -51,6 +52,9 @@ async def async_setup_entry(
                     continue
 
                 if isinstance(ttn_value, TTNSensorAttribute):
+                    continue
+
+                if is_excluded(device_id, field_id):
                     continue
 
                 is_binary_value = isinstance(ttn_value, TTNBinarySensorValue)

@@ -1,0 +1,8 @@
+{
+  "_comment": "Hide TTN fields from Home Assistant. Matched case-insensitively against decoded_payload field_id. Add patterns ending in '*' for prefix wildcard. Names can be plain field_ids OR 'device_id:field_id'. The synthetic diagnostics '_meta_rssi', '_meta_snr', '_meta_last_seen' can also be excluded here.",
+  "global": [
+    "raw_payload",
+    "raw"
+  ],
+  "devices": {}
+}
