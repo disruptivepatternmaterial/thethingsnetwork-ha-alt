@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
@@ -93,11 +94,16 @@ async def update_registered_entity_metadata(
 
     app_id = entry.data[CONF_APP_ID]
 
+    total = 0
+    applied = 0
+
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry, entry.entry_id
     ):
         if entity_entry.domain not in ("sensor", "binary_sensor"):
             continue
+
+        total += 1
 
         try:
             if not entity_entry.device_id or not (
@@ -135,18 +141,17 @@ async def update_registered_entity_metadata(
             if entity_entry.domain == "binary_sensor" and mapped_platform != "binary_sensor":
                 continue
 
-            updates: dict[str, str] = {}
+            updates: dict[str, Any] = {}
 
             if friendly_name := attr.get("friendly_name"):
                 if entity_entry.name != friendly_name:
                     updates["name"] = friendly_name
 
-            if entity_category := attr.get("entity_category"):
-                if (
-                    entity_category in _VALID_ENTITY_CATEGORIES
-                    and entity_entry.entity_category != entity_category
-                ):
-                    updates["entity_category"] = entity_category
+            if (raw := attr.get("entity_category")) and raw in _VALID_ENTITY_CATEGORIES:
+                # HA's async_update_entity requires the EntityCategory enum, not a raw string.
+                category = EntityCategory(raw)
+                if entity_entry.entity_category != category:
+                    updates["entity_category"] = category
 
             if device_class := attr.get("device_class"):
                 if entity_entry.domain == "sensor":
@@ -167,11 +172,12 @@ async def update_registered_entity_metadata(
                         updates["unit_of_measurement"] = unit
 
                 if state_class := attr.get("state_class"):
-                    if (
-                        state_class in _VALID_STATE_CLASSES
-                        and entity_entry.state_class != state_class
-                    ):
-                        updates["state_class"] = state_class
+                    if state_class in _VALID_STATE_CLASSES:
+                        # state_class lives under capabilities on RegistryEntry,
+                        # not as a top-level attribute.
+                        existing = (entity_entry.capabilities or {}).get("state_class")
+                        if existing != state_class:
+                            updates["state_class"] = state_class
 
             if updates:
                 _LOGGER.info(
@@ -182,8 +188,11 @@ async def update_registered_entity_metadata(
                 entity_registry.async_update_entity(
                     entity_entry.entity_id, **updates
                 )
+                applied += 1
         except Exception:
             _LOGGER.exception(
                 "Failed to migrate entity metadata for %s",
                 entity_entry.entity_id,
             )
+
+    _LOGGER.info("Migration applied to %d/%d entities", applied, total)

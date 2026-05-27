@@ -270,11 +270,14 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         if friendly_name := attr.get("friendly_name"):
             self._attr_name = friendly_name
 
+        # Use getattr to avoid AttributeError on HA's CachedProperties descriptor
+        # when _attr_device_class hasn't been set yet (mangled __attr_X cache key).
+        current_dc = getattr(self, "_attr_device_class", None)
         self._parse_timestamp = (
-            self._attr_device_class == SensorDeviceClass.TIMESTAMP
+            current_dc == SensorDeviceClass.TIMESTAMP
             or is_timestamp_field(ttn_value.field_id)
         )
-        if self._parse_timestamp and self._attr_device_class != SensorDeviceClass.TIMESTAMP:
+        if self._parse_timestamp and current_dc != SensorDeviceClass.TIMESTAMP:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
 
     @property
