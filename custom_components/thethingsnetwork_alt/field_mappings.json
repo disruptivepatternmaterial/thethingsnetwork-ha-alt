@@ -97,7 +97,7 @@
   },
   {
     "device_class": "wind_direction",
-    "state_class": "measurement",
+    "state_class": "measurement_angle",
     "friendly_name": "Wind direction",
     "unit": "°",
     "keys": ["wx_wind_direction"]

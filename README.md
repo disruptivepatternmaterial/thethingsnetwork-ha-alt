@@ -22,6 +22,35 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.5.2
+
+- **Fixed startup crash in the entity-metadata migration.** It tried to
+  write `state_class` through `entity_registry.async_update_entity()`,
+  which rejects that argument (`state_class` is not a registry column —
+  it lives under read-only `capabilities`). Every reload logged
+  `Failed to migrate entity metadata for …` and aborted that entity's
+  migration. `state_class` is already applied natively by the sensor on
+  each load, so the redundant registry write was removed.
+- **Fixed `wind_direction` state class.** The `wx_wind_direction`
+  mapping used `state_class: measurement` which Home Assistant rejects
+  for the `wind_direction` device class (it requires `measurement_angle`
+  or none). Updated the default mapping to `measurement_angle`.
+
+### Known upstream log noise
+
+The bundled `ttn_client==1.3.0` parser logs a `WARNING` for every
+`decoded_payload` field that arrives as `null`
+(`Ignoring entry <field> with value=None - check your application
+decoder`). This comes from the library, not this integration, and can be
+high-volume for sensors that report sparse fields. Quiet it from
+`configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    ttn_client.parsers.default: error
+```
+
 ## What you get out of the box (v0.5.0)
 
 - Sensors for every numeric / string / boolean field in `decoded_payload`.

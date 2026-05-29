@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -27,7 +27,6 @@ _VALID_SENSOR_DEVICE_CLASSES = frozenset(item.value for item in SensorDeviceClas
 _VALID_BINARY_DEVICE_CLASSES = frozenset(
     item.value for item in BinarySensorDeviceClass
 )
-_VALID_STATE_CLASSES = frozenset(item.value for item in SensorStateClass)
 _VALID_ENTITY_CATEGORIES = frozenset(item.value for item in EntityCategory)
 
 
@@ -171,13 +170,13 @@ async def update_registered_entity_metadata(
                     if entity_entry.unit_of_measurement != unit:
                         updates["unit_of_measurement"] = unit
 
-                if state_class := attr.get("state_class"):
-                    if state_class in _VALID_STATE_CLASSES:
-                        # state_class lives under capabilities on RegistryEntry,
-                        # not as a top-level attribute.
-                        existing = (entity_entry.capabilities or {}).get("state_class")
-                        if existing != state_class:
-                            updates["state_class"] = state_class
+            # NOTE: ``state_class`` is intentionally not migrated here.
+            # It is not a column on the entity registry (and is rejected by
+            # ``async_update_entity``); it lives under read-only
+            # ``capabilities`` populated from the entity's own
+            # ``_attr_state_class``. ``TtnDataSensor`` already applies the
+            # mapped ``state_class`` natively on every load, so HA refreshes
+            # the stored capabilities automatically without a registry write.
 
             if updates:
                 _LOGGER.info(
