@@ -22,6 +22,30 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.5.3
+
+- **RSSI / SNR / Last-seen no longer go blank for infrequent senders.**
+  After the first fetch, each poll only covers the seconds since the
+  previous poll, so a device that did not uplink in that window is absent
+  from the coordinator data. The diagnostic meta-sensors read that data
+  live and dropped to `unknown`/`unavailable` on every such poll — only a
+  constantly-transmitting device ever showed a value. They now retain the
+  last computed reading, matching how the regular sensors persist.
+- **Moved JSON config reads off the event loop.** `field_mappings.json`,
+  `field_exclusions.json`, and `device_names.json` were read with blocking
+  I/O during setup, which Home Assistant flags as a blocking call in the
+  event loop. The caches are now primed in the executor before any
+  in-loop accessor runs.
+- **Much more complete field mappings.** Standardized PM/AQI naming and
+  device classes (`PM1`/`PM2.5`/`PM4`/`PM10`, `AQI`, `AQI (PM2.5)`,
+  `AQI (PM10)`), corrected Dragino S31-LB/LSN50 interrupt fields
+  (`Door_status`, `EXTI_Trigger`, pin level are the external-interrupt
+  input — diagnostic, not a real door; the real door uses
+  `door_open_status`), `Battery status`/`Battery OK`/`Data confidence`/
+  `Fog suspect` typing, and various status/diagnostic fields. The Dragino
+  `datalog*` replay buffers (lists of past readings, not live values) are
+  now excluded.
+
 ## Changes in 0.5.2
 
 - **Fixed startup crash in the entity-metadata migration.** It tried to

@@ -13,12 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import CONF_APP_ID, DOMAIN, _INTEGRATION_VERSION
-from .field_defaults import (
-    get_field_platform,
-    merge_field_attr,
-    reload_field_mappings,
-)
-from .mappings import _load_field_mappings
+from .field_defaults import get_field_platform, merge_field_attr
 from .metadata import get_device_name, load_device_names
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,9 +78,11 @@ def _update_registered_device_names(
 async def update_registered_entity_metadata(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Apply field defaults and device names to existing registry entries."""
-    reload_field_mappings()
+    """Apply field defaults and device names to existing registry entries.
 
+    The mapping/device-name caches are reloaded and primed off-loop by
+    ``async_setup_entry`` before this runs, so no file reads happen here.
+    """
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
 

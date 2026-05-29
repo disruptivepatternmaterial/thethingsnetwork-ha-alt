@@ -36,6 +36,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
     reload_field_mappings()
     reload_exclusions()
 
+    # The mappings / exclusions / device-name caches each read a JSON file from
+    # disk on first access. Prime them in the executor so the synchronous
+    # accessors used during entity setup, startup logging, and the metadata
+    # migration hit memory instead of doing blocking I/O inside the event loop.
+    await hass.async_add_executor_job(_load_field_mappings)
+    await hass.async_add_executor_job(load_exclusions_summary)
+    await hass.async_add_executor_job(load_device_names)
+
     coordinator = TTNCoordinator(hass, entry)
 
     await coordinator.async_config_entry_first_refresh()

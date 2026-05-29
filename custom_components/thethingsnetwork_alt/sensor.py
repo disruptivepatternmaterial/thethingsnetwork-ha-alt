@@ -357,6 +357,12 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
         self._device_id_value = device_id
         self._kind = kind
         self._attr_unique_id = f"{device_id}_{kind}"
+        # Retain the last computed reading. Polls after the first fetch only
+        # cover the seconds since the previous poll, so a device that did not
+        # uplink in that window is absent from coordinator.data. Without this
+        # cache the sensor would flip to unknown on every such poll (only a
+        # constantly-transmitting device would ever show a value).
+        self._cached_value: StateType | datetime = None
 
         self._attr_name = attr.get("friendly_name", kind.replace("_meta_", ""))
 
@@ -383,7 +389,20 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> StateType | datetime:
-        """Read latest RSSI / SNR / last_seen from any TTN value for this device."""
+        """Read latest RSSI / SNR / last_seen, retaining the last known value.
+
+        When the device is absent from the current poll (no uplink in the
+        window), keep the previously computed reading instead of dropping to
+        ``None`` so the sensor matches the persistence of the regular TTN
+        sensors.
+        """
+        computed = self._compute_value()
+        if computed is not None:
+            self._cached_value = computed
+        return self._cached_value
+
+    def _compute_value(self) -> StateType | datetime:
+        """Compute the metric from the latest uplink in coordinator data."""
         data = self.coordinator.data or {}
         device_data = data.get(self._device_id_value)
         if not device_data:

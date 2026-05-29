@@ -11,8 +11,16 @@
       "tempc_ds18b20",
       "tempc_ds",
       "temperature_c",
+      "temperature",
       "wx_temperature"
     ]
+  },
+  {
+    "device_class": "temperature",
+    "state_class": "measurement",
+    "friendly_name": "Probe temperature",
+    "unit": "°C",
+    "keys": ["temp_probe", "tempc1"]
   },
   {
     "device_class": "temperature",
@@ -40,7 +48,15 @@
     "state_class": "measurement",
     "friendly_name": "Relative humidity",
     "unit": "%",
-    "keys": ["hum_sht31", "hum_sht", "hum_sht41", "humidity_rh", "wx_humidity"]
+    "keys": [
+      "hum_sht31",
+      "hum_sht",
+      "hum_sht41",
+      "humidity_rh",
+      "humidity_pct",
+      "humidity",
+      "wx_humidity"
+    ]
   },
   {
     "device_class": "voltage",
@@ -48,7 +64,14 @@
     "entity_category": "diagnostic",
     "friendly_name": "Battery voltage",
     "unit": "V",
-    "keys": ["batv", "bat", "battery_voltage_v", "batt_voltage", "hub_voltage"]
+    "keys": [
+      "batv",
+      "bat",
+      "battery_voltage_v",
+      "batt_voltage",
+      "battery_v",
+      "hub_voltage"
+    ]
   },
   {
     "device_class": "battery",
@@ -86,7 +109,7 @@
     "state_class": "measurement",
     "friendly_name": "Barometric pressure",
     "unit": "hPa",
-    "keys": ["wx_barometer", "barometer_5", "barometer"]
+    "keys": ["wx_barometer", "barometer_5", "barometer", "pressure_hpa"]
   },
   {
     "device_class": "wind_speed",
@@ -135,7 +158,25 @@
     "friendly_name": "Door",
     "state_on": ["open", "OPEN"],
     "state_off": ["close", "CLOSE", "closed", "CLOSED"],
-    "keys": ["door_status", "door_open_status"]
+    "keys": ["door_open_status"]
+  },
+  {
+    "platform": "binary_sensor",
+    "device_class": "opening",
+    "entity_category": "diagnostic",
+    "friendly_name": "External input (EXTI)",
+    "_comment": "Dragino S31-LB/LSN50 external-interrupt contact pin. NOT a real door on temp/humidity nodes unless a dry contact is wired to the EXTI input; the real door sensor uses door_open_status.",
+    "state_on": ["open", "OPEN", "1", 1, "TRUE", "True"],
+    "state_off": ["close", "CLOSE", "closed", "CLOSED", "0", 0, "FALSE", "False"],
+    "keys": ["door_status"]
+  },
+  {
+    "platform": "binary_sensor",
+    "entity_category": "diagnostic",
+    "friendly_name": "Interrupt pin level",
+    "state_on": ["High", "HIGH", "1", 1],
+    "state_off": ["Low", "LOW", "0", 0],
+    "keys": ["pa8_level", "exti_pin_level"]
   },
   {
     "platform": "binary_sensor",
@@ -155,8 +196,11 @@
   },
   {
     "platform": "binary_sensor",
-    "device_class": "opening",
-    "friendly_name": "External trigger",
+    "entity_category": "diagnostic",
+    "friendly_name": "External interrupt",
+    "_comment": "Dragino EXTI_Trigger: whether this uplink was triggered by an external-interrupt event on the EXTI pin.",
+    "state_on": ["1", 1, "TRUE", "True", "true"],
+    "state_off": ["0", 0, "FALSE", "False", "false"],
     "keys": ["exti_trigger"]
   },
   {
@@ -217,7 +261,7 @@
     "state_class": "measurement",
     "friendly_name": "ADC voltage",
     "unit": "V",
-    "keys": ["adc_v"]
+    "keys": ["adc_v", "adc1_v"]
   },
   {
     "state_class": "total_increasing",
@@ -244,6 +288,143 @@
     "entity_category": "diagnostic",
     "friendly_name": "Firmware version",
     "keys": ["firmware_version"]
+  },
+  {
+    "device_class": "pm1",
+    "state_class": "measurement",
+    "friendly_name": "PM1",
+    "unit": "µg/m³",
+    "keys": ["pm1_ug_m3"]
+  },
+  {
+    "device_class": "pm25",
+    "state_class": "measurement",
+    "friendly_name": "PM2.5",
+    "unit": "µg/m³",
+    "keys": ["pm2_5_ug_m3"]
+  },
+  {
+    "device_class": "pm25",
+    "state_class": "measurement",
+    "friendly_name": "PM2.5 (corrected)",
+    "unit": "µg/m³",
+    "keys": ["pm2_5_corrected"]
+  },
+  {
+    "device_class": "pm25",
+    "state_class": "measurement",
+    "friendly_name": "PM2.5 (raw)",
+    "unit": "µg/m³",
+    "keys": ["pm2_5_raw"]
+  },
+  {
+    "device_class": "pm4",
+    "state_class": "measurement",
+    "friendly_name": "PM4",
+    "unit": "µg/m³",
+    "keys": ["pm4_ug_m3"]
+  },
+  {
+    "device_class": "pm10",
+    "state_class": "measurement",
+    "friendly_name": "PM10",
+    "unit": "µg/m³",
+    "keys": ["pm10_ug_m3"]
+  },
+  {
+    "device_class": "aqi",
+    "state_class": "measurement",
+    "friendly_name": "AQI",
+    "keys": ["aqi"]
+  },
+  {
+    "device_class": "aqi",
+    "state_class": "measurement",
+    "friendly_name": "AQI (PM2.5)",
+    "keys": ["aqi_pm2_5"]
+  },
+  {
+    "device_class": "aqi",
+    "state_class": "measurement",
+    "friendly_name": "AQI (PM10)",
+    "keys": ["aqi_pm10"]
+  },
+  {
+    "friendly_name": "AQI category",
+    "keys": ["aqi_category"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Data confidence",
+    "keys": ["data_confidence"]
+  },
+  {
+    "platform": "binary_sensor",
+    "device_class": "problem",
+    "entity_category": "diagnostic",
+    "friendly_name": "Fog suspect",
+    "state_on": ["1", 1, "TRUE", "True", "true", "on", "ON"],
+    "state_off": ["0", 0, "FALSE", "False", "false", "off", "OFF"],
+    "keys": ["fog_suspect"]
+  },
+  {
+    "platform": "binary_sensor",
+    "entity_category": "diagnostic",
+    "friendly_name": "Battery OK",
+    "_comment": "Not HA's battery device_class (which is inverted: on=low); on=OK here.",
+    "state_on": ["1", 1, "TRUE", "True", "true", "OK", "ok"],
+    "state_off": ["0", 0, "FALSE", "False", "false"],
+    "keys": ["battery_ok"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Battery status",
+    "keys": ["bat_status"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "External sensor",
+    "keys": ["ext_sensor"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Mode",
+    "keys": ["mod", "cmod", "work_mode"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Uplink type",
+    "keys": ["uplink_type"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Poll ack mode",
+    "keys": ["pnackmd"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Interrupt flag",
+    "keys": ["interrupt_flag"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Sensor flag",
+    "keys": ["sensor_flag"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Sound flags",
+    "keys": ["sound_flags"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Sound key",
+    "keys": ["sound_key"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Sound ACK",
+    "keys": ["sound_ack"]
   },
   {
     "friendly_name": "Latitude",
