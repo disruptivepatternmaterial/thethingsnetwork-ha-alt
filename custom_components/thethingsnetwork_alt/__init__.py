@@ -6,10 +6,10 @@ import logging
 
 from ttn_client import TTNSensorAttribute
 
-from homeassistant.const import CONF_API_KEY, CONF_HOST
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
-from .const import PLATFORMS, TTN_API_HOST, _INTEGRATION_VERSION
+from .const import CONF_APP_ID, PLATFORMS, TTN_API_HOST, _INTEGRATION_VERSION
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .exclusions import (
     is_excluded,
@@ -29,7 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
 
     _LOGGER.debug(
         "Set up %s at %s",
-        entry.data[CONF_API_KEY],
+        entry.data[CONF_APP_ID],
         entry.data.get(CONF_HOST, TTN_API_HOST),
     )
 
@@ -76,7 +76,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool
 
     _LOGGER.debug(
         "Remove %s at %s",
-        entry.data[CONF_API_KEY],
+        entry.data[CONF_APP_ID],
         entry.data.get(CONF_HOST, TTN_API_HOST),
     )
 
