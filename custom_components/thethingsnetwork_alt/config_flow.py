@@ -32,6 +32,10 @@ class TTNFlowHandler(ConfigFlow, domain=DOMAIN):
 
         errors = {}
         if user_input is not None:
+            # Normalize host: users often paste a URL; TTNClient expects a bare hostname.
+            host = str(user_input[CONF_HOST]).strip()
+            host = host.removeprefix("https://").removeprefix("http://").rstrip("/")
+            user_input = {**user_input, CONF_HOST: host or TTN_API_HOST}
             client = TTNClient(
                 user_input[CONF_HOST],
                 user_input[CONF_APP_ID],
