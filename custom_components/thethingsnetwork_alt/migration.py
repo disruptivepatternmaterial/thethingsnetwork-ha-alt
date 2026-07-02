@@ -12,9 +12,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .const import CONF_APP_ID, DOMAIN, _INTEGRATION_VERSION
+from .const import CONF_APP_ID, DOMAIN
 from .field_defaults import get_field_platform, merge_field_attr
-from .metadata import get_device_name, load_device_names
+from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
 

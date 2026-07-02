@@ -102,11 +102,25 @@ class TtnDataBinarySensor(TTNEntity, BinarySensorEntity):
         self._ttn_value = ttn_value
         self._attr = attr
 
-        if device_class := parse_enum(BinarySensorDeviceClass, attr.get("device_class")):
-            self._attr_device_class = device_class
+        if raw_device_class := attr.get("device_class"):
+            if device_class := parse_enum(BinarySensorDeviceClass, raw_device_class):
+                self._attr_device_class = device_class
+            else:
+                _LOGGER.warning(
+                    "Field %s has unsupported binary_sensor device_class=%r",
+                    ttn_value.field_id,
+                    raw_device_class,
+                )
 
-        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
-            self._attr_entity_category = entity_category
+        if raw_entity_category := attr.get("entity_category"):
+            if entity_category := parse_enum(EntityCategory, raw_entity_category):
+                self._attr_entity_category = entity_category
+            else:
+                _LOGGER.warning(
+                    "Field %s has unsupported entity_category=%r",
+                    ttn_value.field_id,
+                    raw_entity_category,
+                )
 
         if friendly_name := attr.get("friendly_name"):
             self._attr_name = friendly_name

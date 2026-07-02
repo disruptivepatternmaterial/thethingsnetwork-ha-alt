@@ -155,7 +155,14 @@ def _load_field_mappings() -> dict[str, FieldMappingDict]:
             if not isinstance(keys, list):
                 continue
             for key in keys:
-                mappings[str(key).lower()] = dict(mapping)
+                key_lc = str(key).lower()
+                if key_lc in mappings:
+                    _LOGGER.warning(
+                        "field_mappings.json: key %r appears in multiple entries; "
+                        "the last one wins",
+                        key_lc,
+                    )
+                mappings[key_lc] = dict(mapping)
     elif isinstance(raw, dict):
         # Legacy: { "field_name": { ...metadata } }
         for key, value in raw.items():

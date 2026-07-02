@@ -47,7 +47,7 @@ class TTNCoordinator(DataUpdateCoordinator[TTNClient.DATA_TYPE]):
         try:
             measurements = await self._client.fetch_data()
         except TTNAuthError as err:
-            _LOGGER.error("TTNAuthError")
+            _LOGGER.error("TTN authentication error: %s", err)
             raise ConfigEntryAuthFailed from err
         else:
             _LOGGER.debug("fetched data: %s", measurements)
