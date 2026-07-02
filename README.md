@@ -8,6 +8,8 @@ Uses domain `thethingsnetwork_alt` so it can coexist with the official integrati
 
 ## Prerequisites
 
+- **Home Assistant 2025.4.0 or newer** (uses the `wind_direction` device class / `measurement_angle` state class and current entity-platform APIs)
+
 Same as the official integration:
 
 1. TTN Storage integration enabled on your application
@@ -21,6 +23,37 @@ Same as the official integration:
 3. Search **The Things Network HA-Alt** → Download
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
+
+## Changes in 0.6.0
+
+Release-readiness pass driven by a multi-model code review.
+
+- **Security: the TTN API key is no longer written to debug logs.** Setup and
+  unload logged the raw API key at DEBUG level (inherited from the upstream
+  core integration); they now log the application ID.
+- **Correct minimum Home Assistant version.** `hacs.json` claimed `2024.6.0`,
+  but the code uses APIs introduced in 2025.3/2025.4
+  (`AddConfigEntryEntitiesCallback`, `measurement_angle`). Minimum is now
+  `2025.4.0`.
+- **GPS altitude sensor no longer permanently suppressed** when the first
+  uplink lacks an altitude value — it is now created as soon as an uplink
+  includes one.
+- **RSSI / SNR / Last-seen read the newest uplink** for the device instead of
+  the first field in iteration order, which could lag behind the most recent
+  packet.
+- **Robust timestamp parsing.** ISO strings with sub-second precision or
+  timezone offsets now parse (previously returned unknown), and malformed
+  numeric timestamps can no longer raise out of the sensor.
+- **Type-change safety.** A field whose value type changes (decoder update)
+  now logs a warning instead of raising `AssertionError` inside the
+  coordinator callback.
+- **Config-flow host normalization.** Pasting `https://eu1.cloud.thethings.network/`
+  now works; the scheme and trailing slash are stripped before validation.
+- Added `LICENSE` (Apache-2.0), GitHub Actions validation (hassfest + HACS),
+  `loggers` in the manifest, duplicate-key warnings for `field_mappings.json`,
+  binary-sensor metadata validation warnings, and documentation corrections
+  (array mapping example, `device_names.json` naming, migration behavior,
+  HACS-update-overwrites-JSON warning).
 
 ## Changes in 0.5.3
 
@@ -75,7 +108,7 @@ logger:
     ttn_client.parsers.default: error
 ```
 
-## What you get out of the box (v0.5.0)
+## What you get out of the box
 
 - Sensors for every numeric / string / boolean field in `decoded_payload`.
 - Binary sensors for fields configured in `field_mappings.json` with `"platform": "binary_sensor"` (doors, occupancy, alarms, etc.).
@@ -92,21 +125,24 @@ Three JSON files next to the integration code:
 - `field_exclusions.json` — TTN field names to **hide** from Home Assistant
 - `device_names.json` — TTN device ID → friendly device name
 
-Example `field_mappings.json` entry for Milesight VS370 occupancy:
+`field_mappings.json` is a JSON **array**; each entry maps one profile to a list of TTN field names (`keys`). Example for Milesight VS370 occupancy:
 
 ```json
-"occupancy": {
-  "platform": "binary_sensor",
-  "friendly_name": "Occupancy",
-  "device_class": "occupancy",
-  "state_on": ["occupied"],
-  "state_off": ["vacant"]
-}
+[
+  {
+    "platform": "binary_sensor",
+    "device_class": "occupancy",
+    "friendly_name": "Occupancy",
+    "state_on": ["occupied"],
+    "state_off": ["vacant"],
+    "keys": ["occupancy"]
+  }
+]
 ```
 
-Use `"platform": "binary_sensor"` for on/off fields that arrive as strings or numbers. Sensor fields omit `platform` (default).
+Use `"platform": "binary_sensor"` for on/off fields that arrive as strings or numbers. Sensor fields omit `platform` (default). See `custom_components/thethingsnetwork_alt/FIELD_MAPPINGS.md` for the full schema.
 
-After editing, update via HACS and restart. Delete stale entities if a field moved from sensor to binary_sensor.
+**These files live inside the integration folder, so a HACS update overwrites them.** Make edits in your fork/repo (so they ship with the next HACS update), not just on the HA host. After editing, update via HACS and restart. Delete stale entities if a field moved from sensor to binary_sensor.
 
 ## Field exclusions
 
@@ -132,7 +168,7 @@ Without `_sensor_attr` in your TTN decoder, built-in defaults in `field_mappings
 
 Device friendly names come from `device_names.json`. Edit that file for your fleet, update via HACS, and restart — names are applied to existing devices on startup.
 
-**Existing entities keep old names/units.** Remove the integration, delete its devices from Settings → Devices, update via HACS, restart, then add the integration again — or delete individual stale entities when platform changes (e.g. occupancy sensor → binary_sensor).
+On every startup a migration pass applies the current `field_mappings.json` names, units, device classes, and entity categories to **existing** registry entries, and removes stale `sensor` entities whose field moved to `binary_sensor` (they are recreated on the next uplink). The one case that still needs manual cleanup is a field moving from `binary_sensor` back to `sensor` — delete that entity in Settings → Entities.
 
 ## Decoder metadata (optional override)
 
@@ -178,7 +214,7 @@ function decodeUplink(input) {
 
 ## Device names
 
-Device name in Home Assistant is the TTN end-device `device_id`. Rename the device in TTN Console for a friendlier label.
+Devices are named from `device_names.json` (TTN end-device `device_id` → friendly name). Devices without an entry fall back to the raw `device_id`.
 
 ## Upstream
 

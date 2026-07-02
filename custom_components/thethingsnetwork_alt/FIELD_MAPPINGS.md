@@ -8,7 +8,7 @@ Three JSON files in this folder control entity metadata:
 | `field_exclusions.json` | TTN fields to **hide** from HA entirely (global or per device). |
 | `device_names.json` | TTN device id → friendly device name. |
 
-After edits: HACS update → **restart Home Assistant**.
+**A HACS update overwrites this folder**, including these JSON files — keep your edits in your fork/repo so they survive updates. After edits: HACS update → **restart Home Assistant**.
 
 ---
 
@@ -103,7 +103,7 @@ If an excluded field already has an entity in HA, remove it from Settings → De
 
 ---
 
-## Built-in defaults (v0.5.0)
+## Built-in defaults
 
 The following are recognised automatically — you do not need to map them yourself:
 
@@ -117,6 +117,7 @@ Fields not explicitly mapped get an **auto-generated friendly name** (`battery_v
 | Suffix | Unit | Device class |
 |---|---|---|
 | `_mv` | mV | voltage |
+| `_uv` | µV | voltage |
 | `_v` | V | voltage |
 | `_ma` | mA | current |
 | `_a` | A | current |
