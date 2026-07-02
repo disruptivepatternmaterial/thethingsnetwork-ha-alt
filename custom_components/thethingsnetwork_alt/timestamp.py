@@ -30,21 +30,19 @@ def parse_ttn_timestamp(value: object) -> datetime | None:
         ts = float(value)
         if ts > 9999999999:
             ts /= 1000
-        return datetime.fromtimestamp(ts, tz=UTC)
+        try:
+            return datetime.fromtimestamp(ts, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
 
     if isinstance(value, str):
         text = value.strip()
         if not text:
             return None
-        for fmt in (
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%dT%H:%M:%SZ",
-        ):
-            try:
-                parsed = datetime.strptime(text, fmt)
-            except ValueError:
-                continue
-            return parsed.replace(tzinfo=UTC)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
     return None
