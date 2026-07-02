@@ -43,17 +43,27 @@ class TTNEntity(CoordinatorEntity[TTNCoordinator]):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if not self.coordinator.data:
+            return
         my_entity_update = self.coordinator.data.get(self.device_id, {}).get(
             self.field_id
         )
         if (
-            my_entity_update
+            my_entity_update is not None
             and my_entity_update.received_at > self._ttn_value.received_at
         ):
+            if not isinstance(my_entity_update, type(self._ttn_value)):
+                _LOGGER.warning(
+                    "Ignoring update for %s: value type changed from %s to %s "
+                    "(decoder change?); restart Home Assistant to recreate the entity",
+                    self.unique_id,
+                    type(self._ttn_value).__name__,
+                    type(my_entity_update).__name__,
+                )
+                return
             _LOGGER.debug(
                 "Received update for %s: %s", self.unique_id, my_entity_update
             )
-            assert isinstance(my_entity_update, type(self._ttn_value))
             self._ttn_value = my_entity_update
             self.async_write_ha_state()
 
