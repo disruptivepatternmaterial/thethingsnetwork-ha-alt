@@ -208,8 +208,9 @@ def _add_gps_components(
             sensors.add(key)
             continue
 
+        # Skip WITHOUT marking as seen: a later uplink may include altitude,
+        # and the entity should then be created.
         if component == "altitude" and ttn_value.altitude is None:
-            sensors.add(key)
             continue
 
         attr = default_field_attr(component)
@@ -454,8 +455,22 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
 
 
 def _first_uplink_carrier(values) -> TTNBaseValue | None:
-    """Return the first TTN value that exposes a non-empty uplink dict."""
+    """Return the TTN value carrying the most recent uplink.
+
+    Fields can retain uplinks of different ages (a field absent from the
+    latest packet keeps its older uplink), so pick by ``received_at``
+    rather than dict iteration order.
+    """
+    newest: TTNBaseValue | None = None
+    newest_received_at = None
     for v in values:
-        if isinstance(v, TTNBaseValue) and getattr(v, "uplink", None):
-            return v
-    return None
+        if not (isinstance(v, TTNBaseValue) and getattr(v, "uplink", None)):
+            continue
+        try:
+            received_at = v.received_at
+        except (KeyError, ValueError, TypeError):
+            continue
+        if newest_received_at is None or received_at > newest_received_at:
+            newest = v
+            newest_received_at = received_at
+    return newest
