@@ -18,35 +18,35 @@
   {
     "device_class": "temperature",
     "state_class": "measurement",
-    "friendly_name": "Probe temperature",
+    "friendly_name": "Probe Temperature",
     "unit": "°C",
-    "keys": ["temp_probe", "tempc1"]
+    "keys": ["temp_probe", "tempc1","env_temperature"]
   },
   {
     "device_class": "temperature",
     "state_class": "measurement",
-    "friendly_name": "Black surface temperature",
+    "friendly_name": "Black Surface Temperature",
     "unit": "°C",
     "keys": ["tempc_black"]
   },
   {
     "device_class": "temperature",
     "state_class": "measurement",
-    "friendly_name": "Red surface temperature",
+    "friendly_name": "Red Surface Temperature",
     "unit": "°C",
     "keys": ["tempc_red"]
   },
   {
     "device_class": "temperature",
     "state_class": "measurement",
-    "friendly_name": "White surface temperature",
+    "friendly_name": "White Surface Temperature",
     "unit": "°C",
     "keys": ["tempc_white"]
   },
   {
     "device_class": "humidity",
     "state_class": "measurement",
-    "friendly_name": "Relative humidity",
+    "friendly_name": "Relative Humidity",
     "unit": "%",
     "keys": [
       "hum_sht31",
@@ -59,17 +59,35 @@
     ]
   },
   {
+    "device_class": "humidity",
+    "state_class": "measurement",
+    "friendly_name": "Probe Relative Humidity",
+    "unit": "%",
+    "keys": [
+      "env_humidity"
+    ]
+  },
+  {
     "device_class": "voltage",
     "state_class": "measurement",
     "entity_category": "diagnostic",
-    "friendly_name": "Battery voltage",
+    "friendly_name": "Battery Voltage",
     "unit": "V",
     "keys": [
       "batv",
       "bat",
       "battery_voltage_v",
       "batt_voltage",
-      "battery_v",
+      "battery_v"
+    ]
+  },
+  {
+    "device_class": "voltage",
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "Hub Voltage",
+    "unit": "V",
+    "keys": [
       "hub_voltage"
     ]
   },
@@ -93,7 +111,7 @@
     "device_class": "temperature",
     "state_class": "measurement",
     "entity_category": "diagnostic",
-    "friendly_name": "Battery temperature",
+    "friendly_name": "Battery Temperature",
     "unit": "°C",
     "keys": ["batt_temperature"]
   },
@@ -107,7 +125,7 @@
   {
     "device_class": "pressure",
     "state_class": "measurement",
-    "friendly_name": "Barometric pressure",
+    "friendly_name": "Barometric Pressure",
     "unit": "hPa",
     "keys": ["wx_barometer", "barometer_5", "barometer", "pressure_hpa"]
   },
@@ -121,27 +139,27 @@
   {
     "device_class": "wind_direction",
     "state_class": "measurement_angle",
-    "friendly_name": "Wind direction",
+    "friendly_name": "Wind Direction",
     "unit": "°",
     "keys": ["wx_wind_direction"]
   },
   {
     "state_class": "measurement",
-    "friendly_name": "Seismic intensity",
+    "friendly_name": "Seismic Intensity",
     "unit": "m/s",
     "keys": ["si_value_m_s"]
   },
   {
     "device_class": "acceleration",
     "state_class": "measurement",
-    "friendly_name": "Peak ground acceleration",
+    "friendly_name": "Peak Ground Acceleration",
     "unit": "m/s²",
     "keys": ["pga_m_s2"]
   },
   {
     "device_class": "timestamp",
     "entity_category": "diagnostic",
-    "friendly_name": "Device timestamp",
+    "friendly_name": "Device Timestamp",
     "keys": ["data_time", "timestamp", "systimestamp"]
   },
   {
@@ -276,17 +294,27 @@
   },
   {
     "entity_category": "diagnostic",
-    "friendly_name": "RAK serial",
+    "friendly_name": "RAK Serial",
     "keys": ["rak_serial"]
   },
   {
     "entity_category": "diagnostic",
-    "friendly_name": "Node type",
+    "friendly_name": "Wx Serial",
+    "keys": ["wx_serial"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Probe Serial",
+    "keys": ["env_serial"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Node Type",
     "keys": ["node_type"]
   },
   {
     "entity_category": "diagnostic",
-    "friendly_name": "Firmware version",
+    "friendly_name": "Firmware Version",
     "keys": ["firmware_version"]
   },
   {
@@ -467,5 +495,10 @@
     "entity_category": "diagnostic",
     "friendly_name": "Last seen",
     "keys": ["_meta_last_seen"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Gateway",
+    "keys": ["_meta_gateway"]
   }
 ]

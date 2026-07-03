@@ -7,7 +7,6 @@ import logging
 from typing import Final
 
 from ttn_client import (
-    TTNBaseValue,
     TTNDeviceTrackerValue,
     TTNSensorAttribute,
     TTNSensorValue,
@@ -36,7 +35,7 @@ from .field_defaults import (
     get_field_platform,
     merge_field_attr,
 )
-from .helpers import extract_sensor_attr, parse_enum
+from .helpers import extract_sensor_attr, newest_uplink_carrier, parse_enum
 from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
@@ -56,7 +55,13 @@ VALID_ENTITY_CATEGORIES: Final[frozenset[str]] = frozenset(
 _META_RSSI: Final = "_meta_rssi"
 _META_SNR: Final = "_meta_snr"
 _META_LAST_SEEN: Final = "_meta_last_seen"
-_META_KINDS: Final[tuple[str, ...]] = (_META_RSSI, _META_SNR, _META_LAST_SEEN)
+_META_GATEWAY: Final = "_meta_gateway"
+_META_KINDS: Final[tuple[str, ...]] = (
+    _META_RSSI,
+    _META_SNR,
+    _META_LAST_SEEN,
+    _META_GATEWAY,
+)
 
 # GPS sub-component suffixes for TTNDeviceTrackerValue expansion.
 _GPS_COMPONENTS: Final[tuple[str, ...]] = ("latitude", "longitude", "altitude")
@@ -409,7 +414,7 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
         if not device_data:
             return None
 
-        sample = _first_uplink_carrier(device_data.values())
+        sample = newest_uplink_carrier(device_data.values())
         if sample is None:
             return None
 
@@ -450,27 +455,8 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
             if isinstance(val, (int, float)):
                 return val
             return None
+        if self._kind == _META_GATEWAY:
+            gateway_id = (best.get("gateway_ids") or {}).get("gateway_id")
+            return str(gateway_id) if gateway_id else None
 
         return None
-
-
-def _first_uplink_carrier(values) -> TTNBaseValue | None:
-    """Return the TTN value carrying the most recent uplink.
-
-    Fields can retain uplinks of different ages (a field absent from the
-    latest packet keeps its older uplink), so pick by ``received_at``
-    rather than dict iteration order.
-    """
-    newest: TTNBaseValue | None = None
-    newest_received_at = None
-    for v in values:
-        if not (isinstance(v, TTNBaseValue) and getattr(v, "uplink", None)):
-            continue
-        try:
-            received_at = v.received_at
-        except (KeyError, ValueError, TypeError):
-            continue
-        if newest_received_at is None or received_at > newest_received_at:
-            newest = v
-            newest_received_at = received_at
-    return newest

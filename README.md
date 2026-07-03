@@ -24,6 +24,26 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.7.0
+
+- **New `device_tracker` platform.** Every TTN end device now gets a GPS
+  `device_tracker` entity so it shows on the Home Assistant map and in map
+  cards. Location priority: GPS decoded from the payload itself
+  (`TTNDeviceTrackerValue`, e.g. a RAK10701 field tester), otherwise the
+  registry location set on the end device in the TTN console
+  (`uplink_message.locations.user`). `locations["frm-payload"]` is
+  deliberately ignored — TTN persists it from old uplinks and it can hold a
+  stale, bogus coordinate. Altitude and the location source (`gps` /
+  `registry`) are exposed as attributes. Exclude `_meta_location` per device
+  in `field_exclusions.json` to suppress the tracker.
+- **New `Gateway` diagnostic sensor** (`_meta_gateway`) alongside RSSI / SNR /
+  Last seen: the `gateway_id` of the best-RSSI gateway from the latest
+  uplink's `rx_metadata`.
+- **Field mappings** for the RAK2560 sensor-hub decoder's per-probe fields:
+  `env_temperature` / `env_humidity` (atmospheric temp/humidity probe),
+  per-probe serials (`wx_serial`, `env_serial`), and `hub_voltage` split out
+  from battery voltage.
+
 ## Changes in 0.6.0
 
 Release-readiness pass driven by a multi-model code review.
