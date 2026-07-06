@@ -116,6 +116,21 @@
     "keys": ["batt_temperature"]
   },
   {
+    "entity_category": "diagnostic",
+    "friendly_name": "Battery Error Code",
+    "keys": ["batt_error_code"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Battery BMS Firmware",
+    "keys": ["batt_bms_firmware"]
+  },
+  {
+    "entity_category": "diagnostic",
+    "friendly_name": "Battery Serial",
+    "keys": ["batt_serial"]
+  },
+  {
     "device_class": "distance",
     "state_class": "measurement",
     "friendly_name": "Snow depth",
