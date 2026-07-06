@@ -96,6 +96,8 @@ Special synthetic diagnostics that can be excluded:
 - `_meta_rssi` — best gateway RSSI per uplink
 - `_meta_snr` — best gateway SNR per uplink
 - `_meta_last_seen` — timestamp of most recent uplink
+- `_meta_gateway` — gateway_id of the best-RSSI gateway per uplink
+- `_meta_location` — the per-device GPS `device_tracker` entity (decoded-payload GPS, falling back to the TTN registry location)
 
 Put them in `global` to turn the diagnostics off everywhere, or in a `devices` entry to turn them off only for specific devices.
 
