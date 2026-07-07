@@ -429,7 +429,7 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
             except (ValueError, TypeError):
                 return None
 
-        rx_metadata = uplink.get("uplink_message", {}).get("rx_metadata") or []
+        rx_metadata = (uplink.get("uplink_message") or {}).get("rx_metadata") or []
         if not rx_metadata:
             return None
 

@@ -24,6 +24,19 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.7.1
+
+- **Hardened the `device_tracker` location logic** (multi-agent code review
+  findings):
+  - Decoded-payload GPS coordinates are now validated (must be numeric)
+    before use; an invalid fix falls back to the registry location instead
+    of masking it or latching into the cached location.
+  - A payload GPS fix more than 24 h older than the device's newest uplink
+    is considered stale and loses to the registry location, so a device
+    whose GPS stopped reporting can't pin an ancient fix forever.
+- Guarded against an explicit `null` `uplink_message` in tracker and
+  diagnostic-sensor metadata parsing.
+
 ## Changes in 0.7.0
 
 - **New `device_tracker` platform.** Every TTN end device now gets a GPS
@@ -178,7 +191,7 @@ Drop a `field_exclusions.json` next to `field_mappings.json` to hide fields you 
 }
 ```
 
-You can also disable the synthetic diagnostic sensors per-device or globally by adding `_meta_rssi`, `_meta_snr`, or `_meta_last_seen` to the exclusion list.
+You can also disable the synthetic diagnostic sensors per-device or globally by adding `_meta_rssi`, `_meta_snr`, `_meta_last_seen`, or `_meta_gateway` to the exclusion list, and the per-device location tracker by adding `_meta_location`.
 
 After editing, update via HACS and restart. To delete entities that are already in Home Assistant after excluding them, remove them from Settings → Devices & services → Entities.
 

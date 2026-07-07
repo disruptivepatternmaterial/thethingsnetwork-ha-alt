@@ -4,7 +4,10 @@ Creates one GPS device_tracker entity per TTN end device so devices show up
 on the Home Assistant map and in map cards. Location source priority:
 
 1. GPS decoded from the payload itself (``TTNDeviceTrackerValue``, e.g. a
-   RAK10701 field tester) — newest fix wins.
+   RAK10701 field tester) — newest fix wins, but only while the fix is no
+   more than ``_GPS_STALE_AFTER`` older than the device's newest uplink.
+   A device whose GPS stopped reporting must not pin an ancient fix over a
+   corrected registry location.
 2. The registry location set on the end device in the TTN console
    (``uplink_message.locations.user``, ``SOURCE_REGISTRY``).
 
@@ -15,6 +18,7 @@ device whose decoder never emitted GPS.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Final
 
 from ttn_client import TTNDeviceTrackerValue
@@ -34,6 +38,10 @@ from .metadata import get_device_name
 # Synthetic field id used for exclusions (exclude it per device in
 # field_exclusions.json to suppress the tracker for that device).
 _META_LOCATION: Final = "_meta_location"
+
+# A decoded-payload GPS fix older than this relative to the device's newest
+# uplink is considered stale and loses to the registry location.
+_GPS_STALE_AFTER: Final = timedelta(hours=24)
 
 
 async def async_setup_entry(
@@ -145,20 +153,17 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         if not device_data:
             return None
 
-        gps_value = self._newest_gps_value(device_data.values())
-        if gps_value is not None:
-            return {
-                "latitude": gps_value.latitude,
-                "longitude": gps_value.longitude,
-                "altitude": gps_value.altitude,
-                "source": "gps",
-            }
-
         carrier = newest_uplink_carrier(device_data.values())
+
+        gps_location = self._gps_location(device_data.values(), carrier)
+        if gps_location is not None:
+            return gps_location
+
         if carrier is None:
             return None
         uplink = carrier.uplink or {}
-        locations = uplink.get("uplink_message", {}).get("locations") or {}
+        uplink_message = uplink.get("uplink_message") or {}
+        locations = uplink_message.get("locations") or {}
         registry = locations.get("user")
         if not isinstance(registry, dict):
             return None
@@ -179,8 +184,13 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         }
 
     @staticmethod
-    def _newest_gps_value(values) -> TTNDeviceTrackerValue | None:
-        """Return the newest decoded-payload GPS value, if any."""
+    def _gps_location(values, carrier) -> dict[str, Any] | None:
+        """Return the newest valid, non-stale decoded-payload GPS location.
+
+        Returns None (falling back to the registry location) when there is
+        no GPS field, its coordinates are not numeric, or the fix is more
+        than ``_GPS_STALE_AFTER`` older than the device's newest uplink.
+        """
         newest: TTNDeviceTrackerValue | None = None
         newest_received_at = None
         for value in values:
@@ -193,4 +203,32 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
             if newest_received_at is None or received_at > newest_received_at:
                 newest = value
                 newest_received_at = received_at
-        return newest
+        if newest is None:
+            return None
+
+        if carrier is not None:
+            try:
+                if carrier.received_at - newest_received_at > _GPS_STALE_AFTER:
+                    return None
+            except (KeyError, ValueError, TypeError):
+                pass
+
+        try:
+            latitude = newest.latitude
+            longitude = newest.longitude
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(latitude, (int, float)) or not isinstance(
+            longitude, (int, float)
+        ):
+            return None
+        try:
+            altitude = newest.altitude
+        except (KeyError, TypeError):
+            altitude = None
+        return {
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "altitude": float(altitude) if isinstance(altitude, (int, float)) else None,
+            "source": "gps",
+        }
