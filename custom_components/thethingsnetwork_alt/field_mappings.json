@@ -175,7 +175,7 @@
     "device_class": "timestamp",
     "entity_category": "diagnostic",
     "friendly_name": "Device Timestamp",
-    "keys": ["data_time", "timestamp", "systimestamp"]
+    "keys": ["data_time", "timestamp", "systimestamp", "timestamp_iso"]
   },
   {
     "platform": "binary_sensor",
@@ -337,21 +337,21 @@
     "state_class": "measurement",
     "friendly_name": "PM1",
     "unit": "µg/m³",
-    "keys": ["pm1_ug_m3"]
+    "keys": ["pm1_ug_m3", "pm1_0_ugm3"]
   },
   {
     "device_class": "pm25",
     "state_class": "measurement",
     "friendly_name": "PM2.5",
     "unit": "µg/m³",
-    "keys": ["pm2_5_ug_m3"]
+    "keys": ["pm2_5_ug_m3", "pm2_5_ugm3"]
   },
   {
     "device_class": "pm25",
     "state_class": "measurement",
     "friendly_name": "PM2.5 (corrected)",
     "unit": "µg/m³",
-    "keys": ["pm2_5_corrected"]
+    "keys": ["pm2_5_corrected", "pm2_5_corrected_ugm3"]
   },
   {
     "device_class": "pm25",
@@ -365,14 +365,38 @@
     "state_class": "measurement",
     "friendly_name": "PM4",
     "unit": "µg/m³",
-    "keys": ["pm4_ug_m3"]
+    "keys": ["pm4_ug_m3", "pm4_0_ugm3"]
   },
   {
     "device_class": "pm10",
     "state_class": "measurement",
     "friendly_name": "PM10",
     "unit": "µg/m³",
-    "keys": ["pm10_ug_m3"]
+    "keys": ["pm10_ug_m3", "pm10_ugm3"]
+  },
+  {
+    "device_class": "acceleration",
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "Accel X",
+    "unit": "g",
+    "keys": ["accel_x_g"]
+  },
+  {
+    "device_class": "acceleration",
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "Accel Y",
+    "unit": "g",
+    "keys": ["accel_y_g"]
+  },
+  {
+    "device_class": "acceleration",
+    "state_class": "measurement",
+    "entity_category": "diagnostic",
+    "friendly_name": "Accel Z",
+    "unit": "g",
+    "keys": ["accel_z_g"]
   },
   {
     "device_class": "aqi",

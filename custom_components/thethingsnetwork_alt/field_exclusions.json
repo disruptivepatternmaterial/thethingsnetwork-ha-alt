@@ -5,5 +5,12 @@
     "raw",
     "datalog*"
   ],
-  "devices": {}
+  "devices": {
+    "rak-solar-sensor-diy-001": [
+      "timestamp_iso",
+      "accel_x_g",
+      "accel_y_g",
+      "accel_z_g"
+    ]
+  }
 }
