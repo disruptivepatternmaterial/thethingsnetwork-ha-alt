@@ -8,7 +8,8 @@ on the Home Assistant map and in map cards. Location source priority:
    more than ``_GPS_STALE_AFTER`` older than the device's newest uplink.
    A device whose GPS stopped reporting must not pin an ancient fix over a
    corrected registry location.
-2. The registry location set on the end device in the TTN console
+2. Flat decoded ``latitude`` / ``longitude`` fields (ordinary sensors).
+3. The registry location set on the end device in the TTN console
    (``uplink_message.locations.user``, ``SOURCE_REGISTRY``).
 
 ``locations["frm-payload"]`` is deliberately ignored: TTN persists it from
