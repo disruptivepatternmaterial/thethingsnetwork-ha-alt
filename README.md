@@ -24,6 +24,18 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.7.2
+
+- **Device names apply to existing HA devices.** `device_names.json` is the
+  display-name map (`muon-air-sensor-004` → `Olivine-Bowman`). A trailing
+  comma no longer empties the map (JSON parse used to fail closed and reset
+  every device to its raw TTN id). Existing registry names are updated on
+  setup.
+- **`device_tracker` Location uses Home Assistant's GPS attributes.** Coords
+  are written to `_attr_latitude` / `_attr_longitude` so map cards and zone
+  state work. Flat decoder fields (`latitude` / `longitude`) are used when
+  there is no nested GPS object, then the TTN console registry location.
+
 ## Changes in 0.7.1
 
 - **Hardened the `device_tracker` location logic** (multi-agent code review
@@ -247,7 +259,7 @@ function decodeUplink(input) {
 
 ## Device names
 
-Devices are named from `device_names.json` (TTN end-device `device_id` → friendly name). Devices without an entry fall back to the raw `device_id`.
+Devices are named from `device_names.json` (TTN end-device `device_id` → friendly name). Devices without an entry fall back to the raw `device_id`. The file must be a JSON object; a trailing comma after the last entry is tolerated but still invalid JSON.
 
 ## Upstream
 
