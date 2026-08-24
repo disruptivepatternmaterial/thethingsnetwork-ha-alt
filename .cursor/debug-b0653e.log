@@ -1,2 +1,0 @@
-{"sessionId":"b0653e","runId":"post-fix","hypothesisId":"C","location":"core.device_registry","message":"004 display name applied","data":{"device_id":"muon-air-sensor-004","name":"Olivine-Bowman"},"timestamp":1756014512884}
-{"sessionId":"b0653e","runId":"post-fix","hypothesisId":"F","location":"postgres","message":"004 tracker now HA location format","data":{"entity_id":"device_tracker.olivine_wx4_sensor_location","state":"Twins and Forest Lands","latitude":48.75627,"longitude":-122.07447,"friendly_name":"Olivine-Bowman Location"},"timestamp":1756014633438}

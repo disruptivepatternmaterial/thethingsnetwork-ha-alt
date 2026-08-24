@@ -36,7 +36,7 @@ from .field_defaults import (
     merge_field_attr,
 )
 from .helpers import extract_sensor_attr, newest_uplink_carrier, parse_enum
-from .metadata import _agent_log, get_device_name
+from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
 _LOGGER = logging.getLogger(__name__)
@@ -150,14 +150,6 @@ async def async_setup_entry(
                     continue
 
                 if isinstance(ttn_value, TTNDeviceTrackerValue):
-                    # #region agent log
-                    _agent_log(
-                        "F",
-                        "sensor.py:_async_measurement_listener",
-                        "TTNDeviceTrackerValue expanded to lat/lon sensors",
-                        {"device_id": device_id, "field_id": field_id},
-                    )
-                    # #endregion
                     _add_gps_components(
                         new_entities,
                         sensors,

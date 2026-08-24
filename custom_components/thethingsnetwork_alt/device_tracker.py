@@ -34,7 +34,7 @@ from .const import CONF_APP_ID, DOMAIN
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .exclusions import is_excluded
 from .helpers import newest_uplink_carrier
-from .metadata import _agent_log, get_device_name
+from .metadata import get_device_name
 
 # Synthetic field id used for exclusions (exclude it per device in
 # field_exclusions.json to suppress the tracker for that device).
@@ -117,26 +117,11 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         # cover the seconds since the previous poll, so a device that did not
         # uplink in that window is absent from coordinator.data.
         self._cached_location: dict[str, Any] | None = None
-        self._debug_logged_location = False
 
-        resolved_name = device_name or device_id
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{app_id}_{device_id}")},
-            name=resolved_name,
+            name=device_name or device_id,
         )
-        # #region agent log
-        _agent_log(
-            "C",
-            "device_tracker.py:__init__",
-            "tracker device name",
-            {
-                "device_id": device_id,
-                "json_name": device_name,
-                "resolved_name": resolved_name,
-                "used_device_id_fallback": device_name is None,
-            },
-        )
-        # #endregion
         self._apply_location_attrs()
 
     async def async_added_to_hass(self) -> None:
@@ -148,18 +133,6 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
             dr.async_get(self.hass).async_update_device(
                 self.device_entry.id, name=friendly
             )
-            # #region agent log
-            _agent_log(
-                "C",
-                "device_tracker.py:async_added_to_hass",
-                "registry name updated",
-                {
-                    "device_id": self._device_id_value,
-                    "from_name": self.device_entry.name,
-                    "to_name": friendly,
-                },
-            )
-            # #endregion
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -193,20 +166,6 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         self._attr_longitude = location["longitude"]
         self.__dict__.pop("latitude", None)
         self.__dict__.pop("longitude", None)
-        # #region agent log
-        if self._device_id_value == "muon-air-sensor-004":
-            _agent_log(
-                "F",
-                "device_tracker.py:_apply_location_attrs",
-                "applied tracker attrs",
-                {
-                    "device_id": self._device_id_value,
-                    "latitude": self._attr_latitude,
-                    "longitude": self._attr_longitude,
-                    "source": location.get("source"),
-                },
-            )
-        # #endregion
 
     def _location(self) -> dict[str, Any] | None:
         computed = self._compute_location()
@@ -225,39 +184,10 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
 
         gps_location = self._gps_location(device_data.values(), carrier)
         if gps_location is not None:
-            # #region agent log
-            if not self._debug_logged_location:
-                self._debug_logged_location = True
-                _agent_log(
-                    "D",
-                    "device_tracker.py:_compute_location",
-                    "using payload gps",
-                    {
-                        "device_id": self._device_id_value,
-                        "has_lat": gps_location.get("latitude") is not None,
-                        "has_lon": gps_location.get("longitude") is not None,
-                        "keys": list(gps_location),
-                    },
-                )
-            # #endregion
             return gps_location
 
         field_location = self._field_location(device_data)
         if field_location is not None:
-            # #region agent log
-            if not self._debug_logged_location:
-                self._debug_logged_location = True
-                _agent_log(
-                    "F",
-                    "device_tracker.py:_compute_location",
-                    "using decoded lat/lon fields",
-                    {
-                        "device_id": self._device_id_value,
-                        "has_lat": field_location.get("latitude") is not None,
-                        "has_lon": field_location.get("longitude") is not None,
-                    },
-                )
-            # #endregion
             return field_location
 
         if carrier is None:
@@ -266,30 +196,6 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         uplink_message = uplink.get("uplink_message") or {}
         locations = uplink_message.get("locations") or {}
         registry = locations.get("user")
-        # #region agent log
-        if not self._debug_logged_location:
-            self._debug_logged_location = True
-            _agent_log(
-                "E",
-                "device_tracker.py:_compute_location",
-                "registry location probe",
-                {
-                    "device_id": self._device_id_value,
-                    "location_keys": list(locations)
-                    if isinstance(locations, dict)
-                    else type(locations).__name__,
-                    "user_is_dict": isinstance(registry, dict),
-                    "user_keys": list(registry) if isinstance(registry, dict) else None,
-                    "lat_type": type(registry.get("latitude")).__name__
-                    if isinstance(registry, dict)
-                    else None,
-                    "lon_type": type(registry.get("longitude")).__name__
-                    if isinstance(registry, dict)
-                    else None,
-                    "field_ids": [str(k) for k in device_data],
-                },
-            )
-        # #endregion
         if not isinstance(registry, dict):
             return None
         latitude = registry.get("latitude")
