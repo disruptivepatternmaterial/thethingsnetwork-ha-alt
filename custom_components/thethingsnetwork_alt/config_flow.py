@@ -1,10 +1,12 @@
 """The Things Network HA-Alt config flow."""
 
 from collections.abc import Mapping
+from datetime import timedelta
 import logging
 from typing import Any
 
-from ttn_client import TTNAuthError, TTNClient
+from aiohttp import ClientError
+from ttn_client import TTNAuthError
 import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigFlow, ConfigFlowResult
@@ -16,6 +18,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import CONF_APP_ID, DOMAIN, TTN_API_HOST
+from .storage import TTNStorageClient, TTNStorageError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,21 +35,31 @@ class TTNFlowHandler(ConfigFlow, domain=DOMAIN):
 
         errors = {}
         if user_input is not None:
-            # Normalize host: users often paste a URL; TTNClient expects a bare hostname.
+            # Normalize host: users often paste a URL; a bare hostname is
+            # what goes into the storage API URL.
             host = str(user_input[CONF_HOST]).strip()
             host = host.removeprefix("https://").removeprefix("http://").rstrip("/")
             user_input = {**user_input, CONF_HOST: host or TTN_API_HOST}
-            client = TTNClient(
+            # A zero-length window checks the host, application and key
+            # without pulling a day of uplinks just to validate the form.
+            client = TTNStorageClient(
+                self.hass,
                 user_input[CONF_HOST],
                 user_input[CONF_APP_ID],
                 user_input[CONF_API_KEY],
-                0,
+                first_fetch=timedelta(0),
             )
             try:
                 await client.fetch_data()
             except TTNAuthError:
                 _LOGGER.exception("Error authenticating with The Things Network")
                 errors["base"] = "invalid_auth"
+            except (ClientError, TimeoutError, TTNStorageError):
+                # A mistyped application id answers 404, not 401. Reporting
+                # that as invalid authentication sent the user off to reissue
+                # a key that was never the problem.
+                _LOGGER.exception("Could not read the storage API")
+                errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unknown error occurred")
                 errors["base"] = "unknown"

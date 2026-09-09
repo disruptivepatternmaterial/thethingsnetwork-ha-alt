@@ -5,6 +5,7 @@
       "reauth_successful": "Re-authentication was successful"
     },
     "error": {
+      "cannot_connect": "Could not read the application's stored uplinks. Check the host and application ID, and that the Storage Integration is enabled for this application.",
       "invalid_auth": "Invalid authentication",
       "unknown": "Unexpected error"
     },
