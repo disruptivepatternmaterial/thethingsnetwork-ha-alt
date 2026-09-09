@@ -18,8 +18,8 @@ from .const import CONF_APP_ID
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNEntity
 from .exclusions import is_excluded
-from .field_defaults import FieldMappingDict, get_field_platform, merge_field_attr, value_is_on
-from .helpers import extract_sensor_attr, parse_enum
+from .field_defaults import FieldMappingDict, merge_field_attr, value_is_on
+from .helpers import extract_sensor_attr, parse_enum, platform_for_value
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,12 +57,10 @@ async def async_setup_entry(
                 if is_excluded(device_id, field_id):
                     continue
 
-                is_binary_value = isinstance(ttn_value, TTNBinarySensorValue)
-                is_mapped_binary = (
-                    isinstance(ttn_value, TTNSensorValue)
-                    and get_field_platform(field_id) == "binary_sensor"
-                )
-                if not is_binary_value and not is_mapped_binary:
+                if platform_for_value(field_id, ttn_value) != "binary_sensor":
+                    continue
+
+                if not coordinator.claim_field(device_id, field_id, "binary_sensor"):
                     continue
 
                 attr = merge_field_attr(sensor_attr.get(field_id, {}), field_id)

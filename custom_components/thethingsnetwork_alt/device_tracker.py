@@ -19,7 +19,7 @@ device whose decoder never emitted GPS.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Final
 
 from ttn_client import TTNDeviceTrackerValue
@@ -29,12 +29,12 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_APP_ID, DOMAIN
 from .coordinator import TTNConfigEntry, TTNCoordinator
+from .entity import TTNCachedEntity
 from .exclusions import is_excluded
-from .helpers import newest_uplink_carrier
+from .helpers import newest_uplink_carrier, received_at_utc
 from .metadata import get_device_name
 
 # Synthetic field id used for exclusions (exclude it per device in
@@ -96,7 +96,7 @@ async def async_setup_entry(
     _async_measurement_listener()
 
 
-class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
+class TtnDeviceTracker(TTNCachedEntity, TrackerEntity):
     """GPS tracker for a TTN end device."""
 
     _attr_has_entity_name = True
@@ -257,13 +257,12 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         than ``_GPS_STALE_AFTER`` older than the device's newest uplink.
         """
         newest: TTNDeviceTrackerValue | None = None
-        newest_received_at = None
+        newest_received_at: datetime | None = None
         for value in values:
             if not isinstance(value, TTNDeviceTrackerValue):
                 continue
-            try:
-                received_at = value.received_at
-            except (KeyError, ValueError, TypeError):
+            received_at = received_at_utc(value)
+            if received_at is None:
                 continue
             if newest_received_at is None or received_at > newest_received_at:
                 newest = value
@@ -271,12 +270,15 @@ class TtnDeviceTracker(CoordinatorEntity[TTNCoordinator], TrackerEntity):
         if newest is None:
             return None
 
-        if carrier is not None:
-            try:
-                if carrier.received_at - newest_received_at > _GPS_STALE_AFTER:
-                    return None
-            except (KeyError, ValueError, TypeError):
-                pass
+        carrier_received_at = (
+            received_at_utc(carrier) if carrier is not None else None
+        )
+        if (
+            carrier_received_at is not None
+            and newest_received_at is not None
+            and carrier_received_at - newest_received_at > _GPS_STALE_AFTER
+        ):
+            return None
 
         try:
             latitude = newest.latitude

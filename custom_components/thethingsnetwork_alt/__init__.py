@@ -19,7 +19,7 @@ from .exclusions import (
 from .field_defaults import reload_field_mappings
 from .mappings import _load_field_mappings, get_field_mapping
 from .metadata import load_device_names
-from .migration import update_registered_entity_metadata
+from .migration import seed_field_platforms, update_registered_entity_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,6 +60,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
     )
 
     _log_field_discovery(coordinator.data)
+
+    # Must run before the platforms start creating entities, so each field is
+    # already assigned to the platform that owned it before this restart.
+    seed_field_platforms(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

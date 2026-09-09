@@ -2,6 +2,7 @@
 
 from .mappings import (
     FieldMappingDict,
+    PlatformType,
     SensorAttrDict,
     default_field_attr,
     get_field_mapping,
@@ -13,6 +14,7 @@ from .mappings import (
 
 __all__ = [
     "FieldMappingDict",
+    "PlatformType",
     "SensorAttrDict",
     "default_field_attr",
     "get_field_mapping",

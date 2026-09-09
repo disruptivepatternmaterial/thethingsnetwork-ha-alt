@@ -13,7 +13,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import CONF_APP_ID, DOMAIN
-from .field_defaults import get_field_platform, merge_field_attr
+from .coordinator import TTNConfigEntry
+from .field_defaults import get_field_mapping, get_field_platform, merge_field_attr
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +40,68 @@ def _field_id_from_unique_id(unique_id: str | None, device_id: str) -> str | Non
     if unique_id.startswith(prefix):
         return unique_id[len(prefix) :]
     return None
+
+
+def _ttn_device_id_for_entity(
+    entity_entry: er.RegistryEntry,
+    device_registry: dr.DeviceRegistry,
+    app_id: str,
+) -> str | None:
+    """Return the TTN device id behind a registry entry, if it has one."""
+    if not entity_entry.device_id or not (
+        device := device_registry.async_get(entity_entry.device_id)
+    ):
+        return None
+
+    for domain, identifier in device.identifiers:
+        if domain != DOMAIN:
+            continue
+        if ttn_device_id := _ttn_device_id_from_identifier(identifier, app_id):
+            return ttn_device_id
+    return None
+
+
+def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
+    """Give each already-registered field back to the platform that owns it.
+
+    ``TTNCoordinator.claim_field`` keeps one field from becoming both a sensor
+    and a binary sensor, but on its own that only holds within a single run:
+    after a restart the first uplink's value type would decide again, and a
+    decoder that alternates between ``0``/``1`` and ``false``/``true`` could
+    hand the field to the other platform and strand the existing entity.
+    Seeding from the registry makes the original choice stick.
+
+    Fields with an explicit ``platform`` in ``field_mappings.json`` are left
+    alone: that mapping is authoritative and is allowed to move a field, which
+    is what ``update_registered_entity_metadata`` cleans up after.
+    """
+    coordinator = entry.runtime_data
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    app_id = entry.data[CONF_APP_ID]
+
+    for entity_entry in er.async_entries_for_config_entry(
+        entity_registry, entry.entry_id
+    ):
+        if entity_entry.domain not in ("sensor", "binary_sensor"):
+            continue
+
+        ttn_device_id = _ttn_device_id_for_entity(
+            entity_entry, device_registry, app_id
+        )
+        if not ttn_device_id:
+            continue
+
+        field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
+        if not field_id or field_id.startswith("_"):
+            continue
+
+        if get_field_mapping(field_id).get("platform"):
+            continue
+
+        coordinator.seed_field_platform(
+            ttn_device_id, field_id, entity_entry.domain
+        )
 
 
 def _update_registered_device_names(
@@ -102,19 +165,9 @@ async def update_registered_entity_metadata(
         total += 1
 
         try:
-            if not entity_entry.device_id or not (
-                device := device_registry.async_get(entity_entry.device_id)
-            ):
-                continue
-
-            ttn_device_id: str | None = None
-            for domain, identifier in device.identifiers:
-                if domain != DOMAIN:
-                    continue
-                ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
-                if ttn_device_id:
-                    break
-
+            ttn_device_id = _ttn_device_id_for_entity(
+                entity_entry, device_registry, app_id
+            )
             if not ttn_device_id:
                 continue
 
