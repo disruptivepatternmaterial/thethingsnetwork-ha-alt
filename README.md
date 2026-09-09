@@ -24,6 +24,51 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.0
+
+- **A failed poll no longer skips past the uplinks it never read.** The
+  library this integration used advanced its "read up to here" watermark
+  *before* issuing the request, so a fetch that failed still counted as
+  having covered that window. With a 60-second polling period and a
+  60-second overlap margin, one failure healed itself and two consecutive
+  failures dropped every uplink in between — permanently, because the
+  storage API is only ever asked for the time since the watermark. TTN had
+  the data and Home Assistant never asked for it again. The watermark now
+  moves only after a response has been read to the end, so a failed or
+  refused poll leaves its window to be re-read by the next one.
+
+- **One unreadable record no longer costs the whole window.** Every record
+  in a response used to be parsed before any of it was returned, so a single
+  record that could not be read discarded the readings for *every* device in
+  that window, not just the device that sent it. Records are now parsed one
+  at a time: the unreadable ones are counted and logged, and everything else
+  in the same response still lands.
+
+  This is reachable from an ordinary decoder mistake. A decoder returning an
+  array instead of an object, an uplink with no `uplink_message`, or a
+  Sensecap payload marked `valid` but missing `err` each raise a different
+  exception out of the parser, which is why the guard around it is
+  deliberately broad rather than a list of expected failures.
+
+- **A mistyped application ID is no longer reported as a bad API key.** Any
+  4xx was previously reported as invalid authentication, so a typo in the
+  application ID sent you off to reissue a working key. A refused credential
+  (401/403) is now the only thing reported as an authentication problem;
+  anything else — a 404 for an application that does not exist, storage not
+  enabled for the application, a 5xx, an unreachable host — is reported as a
+  connection problem, and the log carries the API's own explanation.
+
+- **Polling uses Home Assistant's shared HTTP session** instead of opening
+  and discarding a new one every minute.
+
+- **Lint is now enforced.** `pyproject.toml` carries Home Assistant core's
+  own ruff rule selection, taken verbatim, and CI fails on `ruff check` or
+  `ruff format --check`. Fixing the findings turned up one real bug: TTN
+  timestamps were normalised with `text.replace("Z", "+00:00")`, which
+  rewrites every `Z` in the string rather than just a trailing offset.
+
+- The config and reauth flows have tests for the first time.
+
 ## Changes in 0.7.4
 
 - **A decoded field is no longer swallowed by a GPS object of the same name.**
@@ -371,6 +416,10 @@ Devices are named from `device_names.json` (TTN end-device `device_id` → frien
 
 - [home-assistant/core `thethingsnetwork`](https://github.com/home-assistant/core/tree/dev/homeassistant/components/thethingsnetwork)
 - [angelnu/thethingsnetwork_python_client](https://github.com/angelnu/thethingsnetwork_python_client) (`ttn_client==1.3.0`)
+
+  Used for its decoder parsing and value types. Since 0.8.0 the storage API
+  call itself lives in `storage.py` rather than `ttn_client.TTNClient`, for
+  the window-accounting and per-record reasons in the 0.8.0 notes above.
 
 ## License
 
