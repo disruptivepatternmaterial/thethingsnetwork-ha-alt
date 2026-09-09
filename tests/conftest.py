@@ -25,6 +25,7 @@ from ttn_client.parsers.default import default_parser
 
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from custom_components.thethingsnetwork_alt.const import (
@@ -122,6 +123,7 @@ class TTNHarness:
         self.entry = entry
         self.fetch_error: Exception | None = None
         self._payload: dict[str, dict[str, TTNBaseValue]] = {}
+        self._entry_added = False
         self.fetch_count = 0
 
     async def fetch_data(self) -> dict[str, dict[str, TTNBaseValue]]:
@@ -131,10 +133,48 @@ class TTNHarness:
             raise self.fetch_error
         return self._payload
 
+    def add_entry(self) -> None:
+        """Attach the config entry without setting it up yet."""
+        if not self._entry_added:
+            self.entry.add_to_hass(self.hass)
+            self._entry_added = True
+
+    def preregister(
+        self,
+        domain: str,
+        unique_id: str,
+        device_id: str = DEVICE_ID,
+        *,
+        suggested_object_id: str | None = None,
+    ) -> str:
+        """Seed the registry the way an older release would have left it.
+
+        Upgrade behaviour is only testable against rows that already exist, so
+        this creates the device and entity before setup runs.
+        """
+        self.add_entry()
+        device = dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.entry.entry_id,
+            identifiers={(DOMAIN, f"{APP_ID}_{device_id}")},
+            name=device_id,
+        )
+        return (
+            er.async_get(self.hass)
+            .async_get_or_create(
+                domain,
+                DOMAIN,
+                unique_id,
+                config_entry=self.entry,
+                device_id=device.id,
+                suggested_object_id=suggested_object_id,
+            )
+            .entity_id
+        )
+
     async def start(self, *uplinks: dict[str, Any]) -> None:
         """Set up the config entry with an initial fetch window."""
         self._payload = window(*uplinks)
-        self.entry.add_to_hass(self.hass)
+        self.add_entry()
         assert await self.hass.config_entries.async_setup(self.entry.entry_id)
         await self.hass.async_block_till_done()
 
@@ -161,6 +201,25 @@ class TTNHarness:
         """Return one state attribute, or None when the entity is absent."""
         state = self.hass.states.get(entity_id)
         return None if state is None else state.attributes.get(key)
+
+    def readings(self, prefix: str = "sensor.") -> set[str | None]:
+        """Return every state this integration is currently publishing."""
+        return {self.state(entity_id) for entity_id in self.entity_ids(prefix)}
+
+    def entity_id_for(self, unique_id: str, domain: str = "sensor") -> str | None:
+        """Resolve a unique_id to its entity_id, or None when unregistered."""
+        return er.async_get(self.hass).async_get_entity_id(domain, DOMAIN, unique_id)
+
+    def unique_ids(self, domain: str = "sensor") -> list[str]:
+        """Return the unique_ids this config entry has registered, sorted."""
+        registry = er.async_get(self.hass)
+        return sorted(
+            entry.unique_id
+            for entry in er.async_entries_for_config_entry(
+                registry, self.entry.entry_id
+            )
+            if entry.domain == domain
+        )
 
     def entity_ids(self, prefix: str = "") -> list[str]:
         """Return every entity id this integration created, sorted."""
