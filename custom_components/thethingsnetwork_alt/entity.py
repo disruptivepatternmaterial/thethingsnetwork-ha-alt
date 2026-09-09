@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import logging
 from typing import Final
 
@@ -14,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import TTNCoordinator
+from .helpers import raw_received_at, received_at_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,44 +25,25 @@ _LOGGER = logging.getLogger(__name__)
 _SCALAR_VALUE_TYPES: Final = (TTNSensorValue, TTNBinarySensorValue)
 
 
-def received_at_utc(value: TTNBaseValue) -> datetime | None:
-    """Return an aware UTC receipt time, or None when it cannot be read.
+class TTNCachedEntity(CoordinatorEntity[TTNCoordinator]):
+    """Coordinator entity whose state is the last uplink, not the last fetch."""
 
-    ``TTNBaseValue.received_at`` re-parses the raw uplink string on every
-    access and is unguarded: a missing key raises ``KeyError``, a malformed
-    stamp raises ``ValueError``, and a stamp with no offset yields a naive
-    datetime that cannot be compared against an aware one.
-    """
-    try:
-        received_at = value.received_at
-    except (KeyError, TypeError, ValueError):
-        return None
+    @property
+    def available(self) -> bool:
+        """Return True while this entity holds a reading.
 
-    if not isinstance(received_at, datetime):
-        return None
-
-    # TTN timestamps are UTC; one without an offset is still UTC.
-    if received_at.tzinfo is None:
-        return received_at.replace(tzinfo=UTC)
-    return received_at.astimezone(UTC)
+        ``CoordinatorEntity`` reports unavailable whenever the last fetch
+        failed. A TTN entity does not show a live poll result — it shows the
+        newest uplink TTN has delivered, which a failed fetch does not
+        invalidate. Tying availability to the fetch blanked the diagnostic
+        sensors and the tracker on every transient TTN error while the data
+        sensors, which never rewrite state on a failed poll, kept theirs.
+        The ``Last seen`` sensor is what reports a device going quiet.
+        """
+        return self._attr_available
 
 
-def raw_received_at(value: TTNBaseValue) -> str | None:
-    """Return the uplink's unparsed receipt stamp.
-
-    TTN reports nanoseconds but ``datetime.fromisoformat`` truncates to
-    microseconds, so two distinct uplinks can share a parsed timestamp. The
-    original string keeps the full precision and is what distinguishes a
-    re-delivered uplink from a genuinely new one.
-    """
-    uplink = getattr(value, "uplink", None)
-    if not isinstance(uplink, dict):
-        return None
-    stamp = uplink.get("received_at")
-    return None if stamp is None else str(stamp)
-
-
-class TTNEntity(CoordinatorEntity[TTNCoordinator]):
+class TTNEntity(TTNCachedEntity):
     """Representation of a The Things Network sensor entity."""
 
     _attr_has_entity_name = True
@@ -107,8 +88,17 @@ class TTNEntity(CoordinatorEntity[TTNCoordinator]):
             return
 
         _LOGGER.debug("Received update for %s: %s", self.unique_id, update)
-        self._ttn_value = update
+        self._adopt(update)
         self.async_write_ha_state()
+
+    def _adopt(self, update: TTNBaseValue) -> None:
+        """Make ``update`` the current reading.
+
+        Subclasses override this to refresh anything derived from the reading
+        itself — metadata that depends on whether the field is reporting a
+        number, for instance — before the state write goes out.
+        """
+        self._ttn_value = update
 
     def _accepts(self, update: TTNBaseValue) -> bool:
         """Return True when this entity can represent ``update``.

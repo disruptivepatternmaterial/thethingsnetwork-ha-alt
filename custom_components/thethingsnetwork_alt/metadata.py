@@ -47,6 +47,17 @@ def _load_device_names() -> dict[str, str]:
     return _DEVICE_NAMES
 
 
+def reload_device_names() -> None:
+    """Clear cached device names (call on integration setup).
+
+    Without this the file is read once per Home Assistant process, so an edit
+    to ``device_names.json`` needs a full restart rather than a reload of the
+    config entry — unlike every other JSON file the integration reads.
+    """
+    global _DEVICE_NAMES  # noqa: PLW0603
+    _DEVICE_NAMES = None
+
+
 def get_device_name(device_id: str) -> str | None:
     """Return a friendly device name for a TTN end-device ID, if configured."""
     return _load_device_names().get(device_id)

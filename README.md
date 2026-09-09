@@ -24,7 +24,7 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
-## Changes in 0.7.3 (unreleased)
+## Changes in 0.7.3
 
 - **Sensors no longer silently stop updating.** Four separate defects in the
   coordinator update path each caused a field to stop tracking new uplinks
@@ -49,10 +49,68 @@ Same as the official integration:
     was dropped. Ordering now falls back to the full-precision stamp, which
     still makes a re-delivered uplink idempotent across overlapping fetch
     windows.
+- **A sensor could be frozen by an unhandled `AttributeError`.** When a field
+  that normally reports numbers sent text instead, `native_value` called a
+  method that did not exist. That raised inside Home Assistant's state write,
+  so the sensor stopped at its last reading and every later uplink for it was
+  lost — with only a traceback in the log to say so.
+
+- **Metadata now follows what a field actually reports.** Numeric metadata
+  (`unit`, `device_class`, `state_class`, `suggested_display_precision`) is
+  suppressed while a field has only ever reported text, because Home
+  Assistant refuses a text state on a sensor that promises a number. That
+  decision used to be taken once, at entity creation, so a mapped
+  measurement whose *first* uplink happened to carry an error string spent
+  the rest of the run with no unit, no device class and no statistics. The
+  first numeric reading now restores the mapping, once, and a later text
+  reading reports `unknown` rather than tearing the unit back off a sensor
+  that has history behind it.
+
+- **Decoder `_sensor_attr` is remembered between fetches.** It was read from
+  the current fetch window only, so a decoder that sends its metadata on a
+  different cadence than the measurement — or in the same uplink as a
+  *different* field — left the entity permanently without a unit. Metadata
+  seen in any window now reaches the entity whenever it is created.
+
+- **Binary sensors accept late decoder metadata at all.** They had no
+  equivalent path: a `device_class` that did not ride the very first uplink
+  never arrived.
+
+- **`device_names.json` is re-read when the config entry is set up.** It was
+  cached for the life of the Home Assistant process, unlike every other JSON
+  file the integration reads, so renaming a device appeared to do nothing
+  until Home Assistant itself was restarted.
+
+- **The startup migration no longer overwrites your customisations.** It
+  wrote the mapped name and device class into the entity registry's `name`
+  and `device_class` columns — which are the slots a *user's* rename and
+  override live in, and which Home Assistant deliberately never touches. Any
+  rename you made was reverted on every restart. Those columns are now left
+  alone, and an override this integration wrote in an earlier version is
+  cleared so the mapping shows through again. Nothing is lost by this: Home
+  Assistant already refreshes `original_name`, `original_device_class`, the
+  unit, the entity category and the capabilities from the entity itself every
+  time it loads, so editing `field_mappings.json` reaches existing entities
+  without any registry write.
+
+- **A field mapped from `binary_sensor` back to `sensor` no longer strands
+  the old entity.** The opposite direction was already cleaned up; this one
+  left a binary sensor in the registry sitting at whatever reading it held
+  when the mapping changed.
+
+- **`suggested_display_precision: 0` is honoured.** Zero — "show this as a
+  whole number" — was read as "unset".
+
+- **A record TTN sends that `ttn_client` cannot parse is reported as an
+  update failure**, naming the cause, instead of an unexpected-error
+  traceback every polling period. The window is still lost (the library
+  parses the whole response before returning any of it), but the readings
+  already held survive and the next poll runs normally.
+
 - **The repository has a test suite.** `pytest` with
   `pytest-homeassistant-custom-component`, run in CI on every push and pull
-  request. Each fix above has a regression test that fails against the
-  previous code.
+  request. Each fix above has a regression test, verified to fail when the
+  defect is put back.
 
 ## Changes in 0.7.2
 
@@ -217,7 +275,7 @@ Three JSON files next to the integration code:
 
 Use `"platform": "binary_sensor"` for on/off fields that arrive as strings or numbers. Sensor fields omit `platform` (default). See `custom_components/thethingsnetwork_alt/FIELD_MAPPINGS.md` for the full schema.
 
-**These files live inside the integration folder, so a HACS update overwrites them.** Make edits in your fork/repo (so they ship with the next HACS update), not just on the HA host. After editing, update via HACS and restart. Delete stale entities if a field moved from sensor to binary_sensor.
+**These files live inside the integration folder, so a HACS update overwrites them.** Make edits in your fork/repo (so they ship with the next HACS update), not just on the HA host. After editing, update via HACS and reload the integration. Moving a field between `sensor` and `binary_sensor` needs no manual cleanup — the entity on the old platform is removed and recreated on the next uplink.
 
 ## Field exclusions
 
@@ -241,9 +299,9 @@ After editing, update via HACS and restart. To delete entities that are already 
 
 Without `_sensor_attr` in your TTN decoder, built-in defaults in `field_mappings.json` apply for common Dragino/RAK/VS370 field names. Edit that file to add more.
 
-Device friendly names come from `device_names.json`. Edit that file for your fleet, update via HACS, and restart — names are applied to existing devices on startup.
+Device friendly names come from `device_names.json`. Edit that file for your fleet, update via HACS, then reload the integration — all three JSON files are re-read whenever the config entry is set up, and existing devices are renamed at that point.
 
-On every startup a migration pass applies the current `field_mappings.json` names, units, device classes, and entity categories to **existing** registry entries, and removes stale `sensor` entities whose field moved to `binary_sensor` (they are recreated on the next uplink). The one case that still needs manual cleanup is a field moving from `binary_sensor` back to `sensor` — delete that entity in Settings → Entities.
+Edits to `field_mappings.json` reach entities that already exist without any special handling: Home Assistant re-reads each entity's name, device class, unit, entity category and capabilities from the integration every time it loads. A migration pass on setup covers only what an entity cannot do for itself — renaming devices, and removing an entity whose field has been mapped to the other platform (it is recreated on the next uplink). It deliberately does **not** write the entity registry's `name` or `device_class` columns, so a rename or device-class override you set in Settings → Entities is yours and survives restarts.
 
 ## Decoder metadata (optional override)
 

@@ -5,24 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import CONF_APP_ID, DOMAIN
-from .field_defaults import get_field_platform, merge_field_attr
+from .coordinator import TTNConfigEntry
+from .field_defaults import get_field_mapping, get_field_platform, merge_field_attr
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
-
-_VALID_SENSOR_DEVICE_CLASSES = frozenset(item.value for item in SensorDeviceClass)
-_VALID_BINARY_DEVICE_CLASSES = frozenset(
-    item.value for item in BinarySensorDeviceClass
-)
-_VALID_ENTITY_CATEGORIES = frozenset(item.value for item in EntityCategory)
 
 
 def _ttn_device_id_from_identifier(identifier: str, app_id: str) -> str | None:
@@ -41,6 +33,68 @@ def _field_id_from_unique_id(unique_id: str | None, device_id: str) -> str | Non
     return None
 
 
+def _ttn_device_id_for_entity(
+    entity_entry: er.RegistryEntry,
+    device_registry: dr.DeviceRegistry,
+    app_id: str,
+) -> str | None:
+    """Return the TTN device id behind a registry entry, if it has one."""
+    if not entity_entry.device_id or not (
+        device := device_registry.async_get(entity_entry.device_id)
+    ):
+        return None
+
+    for domain, identifier in device.identifiers:
+        if domain != DOMAIN:
+            continue
+        if ttn_device_id := _ttn_device_id_from_identifier(identifier, app_id):
+            return ttn_device_id
+    return None
+
+
+def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
+    """Give each already-registered field back to the platform that owns it.
+
+    ``TTNCoordinator.claim_field`` keeps one field from becoming both a sensor
+    and a binary sensor, but on its own that only holds within a single run:
+    after a restart the first uplink's value type would decide again, and a
+    decoder that alternates between ``0``/``1`` and ``false``/``true`` could
+    hand the field to the other platform and strand the existing entity.
+    Seeding from the registry makes the original choice stick.
+
+    Fields with an explicit ``platform`` in ``field_mappings.json`` are left
+    alone: that mapping is authoritative and is allowed to move a field, which
+    is what ``update_registered_entity_metadata`` cleans up after.
+    """
+    coordinator = entry.runtime_data
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    app_id = entry.data[CONF_APP_ID]
+
+    for entity_entry in er.async_entries_for_config_entry(
+        entity_registry, entry.entry_id
+    ):
+        if entity_entry.domain not in ("sensor", "binary_sensor"):
+            continue
+
+        ttn_device_id = _ttn_device_id_for_entity(
+            entity_entry, device_registry, app_id
+        )
+        if not ttn_device_id:
+            continue
+
+        field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
+        if not field_id or field_id.startswith("_"):
+            continue
+
+        if get_field_mapping(field_id).get("platform"):
+            continue
+
+        coordinator.seed_field_platform(
+            ttn_device_id, field_id, entity_entry.domain
+        )
+
+
 def _update_registered_device_names(
     device_registry: dr.DeviceRegistry,
     entry: ConfigEntry,
@@ -48,10 +102,7 @@ def _update_registered_device_names(
     """Rename TTN devices using device_names.json."""
     app_id = entry.data[CONF_APP_ID]
 
-    for device in device_registry.devices.values():
-        if entry.entry_id not in device.config_entries:
-            continue
-
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         ttn_device_id: str | None = None
         for domain, identifier in device.identifiers:
             if domain != DOMAIN:
@@ -75,10 +126,46 @@ def _update_registered_device_names(
         )
 
 
+def _remove_stale_entity(
+    entity_registry: er.EntityRegistry,
+    entity_entry: er.RegistryEntry,
+    field_id: str,
+    mapped_platform: str,
+) -> None:
+    """Drop an entity the mapping has moved to the other platform.
+
+    Left in place it would sit at whatever reading it last took, for as long
+    as the field keeps uplinking into its replacement.
+    """
+    _LOGGER.warning(
+        "Removing stale %s %s (%s is mapped to %s); it will be recreated on "
+        "the next uplink",
+        entity_entry.domain,
+        entity_entry.entity_id,
+        field_id,
+        mapped_platform,
+    )
+    entity_registry.async_remove(entity_entry.entity_id)
+
+
 async def update_registered_entity_metadata(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Apply field defaults and device names to existing registry entries.
+    """Reconcile the registry rows the entities themselves cannot reach.
+
+    Home Assistant re-reads ``original_name``, ``original_device_class``,
+    ``entity_category``, ``unit_of_measurement`` and ``capabilities`` off the
+    entity every time it is added, so an edit to ``field_mappings.json``
+    reaches entities that already exist without any registry write at all.
+
+    ``name`` and ``device_class`` are the exception, and not in a useful way:
+    they are the columns a user's own customisation lives in, which is exactly
+    why Home Assistant never overwrites them. Earlier versions wrote the
+    mapped values there, which shadowed the mapping from that point on and
+    overwrote the user's choice on every restart. Undoing that is what is left
+    here, alongside the two things no entity can do for itself: renaming
+    devices, and removing an entity whose field has been mapped to the other
+    platform.
 
     The mapping/device-name caches are reloaded and primed off-loop by
     ``async_setup_entry`` before this runs, so no file reads happen here.
@@ -102,19 +189,9 @@ async def update_registered_entity_metadata(
         total += 1
 
         try:
-            if not entity_entry.device_id or not (
-                device := device_registry.async_get(entity_entry.device_id)
-            ):
-                continue
-
-            ttn_device_id: str | None = None
-            for domain, identifier in device.identifiers:
-                if domain != DOMAIN:
-                    continue
-                ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
-                if ttn_device_id:
-                    break
-
+            ttn_device_id = _ttn_device_id_for_entity(
+                entity_entry, device_registry, app_id
+            )
             if not ttn_device_id:
                 continue
 
@@ -124,62 +201,49 @@ async def update_registered_entity_metadata(
 
             attr = merge_field_attr({}, field_id)
             mapped_platform = get_field_platform(field_id)
+            explicit_platform = get_field_mapping(field_id).get("platform")
 
             if entity_entry.domain == "sensor" and mapped_platform == "binary_sensor":
-                _LOGGER.warning(
-                    "Removing stale sensor %s (%s is mapped to binary_sensor); "
-                    "it will be recreated on the next uplink",
-                    entity_entry.entity_id,
-                    field_id,
+                _remove_stale_entity(
+                    entity_registry, entity_entry, field_id, "binary_sensor"
                 )
-                entity_registry.async_remove(entity_entry.entity_id)
-                continue
-            if entity_entry.domain == "binary_sensor" and mapped_platform != "binary_sensor":
                 continue
 
-            updates: dict[str, Any] = {}
+            if entity_entry.domain == "binary_sensor":
+                if explicit_platform == "sensor":
+                    # Only an explicit mapping may move a field this way. The
+                    # default from ``get_field_platform`` is "sensor", so
+                    # reading ``mapped_platform`` here instead would delete
+                    # every binary sensor that was assigned by value type
+                    # rather than by the mapping file.
+                    _remove_stale_entity(
+                        entity_registry, entity_entry, field_id, "sensor"
+                    )
+                    continue
+                if mapped_platform != "binary_sensor":
+                    # Assigned by value type, so the mapping describes nothing
+                    # about it and has no metadata to migrate.
+                    continue
 
-            if friendly_name := attr.get("friendly_name"):
-                if entity_entry.name != friendly_name:
-                    updates["name"] = friendly_name
-
-            if (raw := attr.get("entity_category")) and raw in _VALID_ENTITY_CATEGORIES:
-                # HA's async_update_entity requires the EntityCategory enum, not a raw string.
-                category = EntityCategory(raw)
-                if entity_entry.entity_category != category:
-                    updates["entity_category"] = category
-
-            if device_class := attr.get("device_class"):
-                if entity_entry.domain == "sensor":
-                    if (
-                        device_class in _VALID_SENSOR_DEVICE_CLASSES
-                        and entity_entry.device_class != device_class
-                    ):
-                        updates["device_class"] = device_class
-                elif (
-                    device_class in _VALID_BINARY_DEVICE_CLASSES
-                    and entity_entry.device_class != device_class
-                ):
-                    updates["device_class"] = device_class
-
-            if entity_entry.domain == "sensor":
-                if unit := attr.get("unit"):
-                    if entity_entry.unit_of_measurement != unit:
-                        updates["unit_of_measurement"] = unit
-
-            # NOTE: ``state_class`` is intentionally not migrated here.
-            # It is not a column on the entity registry (and is rejected by
-            # ``async_update_entity``); it lives under read-only
-            # ``capabilities`` populated from the entity's own
-            # ``_attr_state_class``. ``TtnDataSensor`` already applies the
-            # mapped ``state_class`` natively on every load, so HA refreshes
-            # the stored capabilities automatically without a registry write.
+            # Clear a customisation only where it still holds exactly what
+            # this integration used to write there — never a value the user
+            # chose. Once cleared, the mapped value shows through from
+            # ``original_name`` / ``original_device_class`` as it should.
+            updates: dict[str, Any] = {
+                column: None
+                for column, mapped in (
+                    ("name", attr.get("friendly_name")),
+                    ("device_class", attr.get("device_class")),
+                )
+                if getattr(entity_entry, column) is not None
+                and getattr(entity_entry, column) == mapped
+            }
 
             if updates:
                 _LOGGER.info(
-                    "Updated entity %s: %s",
+                    "Released %s back to field_mappings.json: cleared %s",
                     entity_entry.entity_id,
-                    updates,
+                    ", ".join(sorted(updates)),
                 )
                 entity_registry.async_update_entity(
                     entity_entry.entity_id, **updates
