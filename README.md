@@ -24,6 +24,30 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.2
+
+- **A device with no payload formatter no longer gets entities it can never
+  fill.** v0.8.0 took over the storage call and, in the process, dropped a
+  guard the previous code had: an uplink with no `decoded_payload` — what
+  every device without a working payload formatter sends — was recorded as a
+  device with no readings rather than skipped. Each such device then gained a
+  device entry, four diagnostic sensors (RSSI, SNR, gateway, last seen) and a
+  device tracker, all permanently `unknown`, because each of those is read
+  from a decoded reading and there were none.
+
+  If you upgraded to 0.8.0 or 0.8.1 and picked up entities like this, they
+  will stop being created, but the ones already registered stay until you
+  delete them: Settings → Devices & services → The Things Network HA-Alt,
+  then delete the affected device.
+
+- **Internal restructuring of the storage client**, with no behaviour change:
+  the per-record failure path now raises instead of encoding "unreadable" in
+  a return value, `fetch_data` delegates response validation and folding so
+  its body is just the watermark ordering, the first-fetch reach-back and the
+  per-window ceiling are separate constants, and the config flow's credential
+  check has a name (`async_validate_credentials`) instead of being a fetch
+  with a zero-length window.
+
 ## Changes in 0.8.1
 
 - **Four shipped field mappings claimed a device class Home Assistant does
