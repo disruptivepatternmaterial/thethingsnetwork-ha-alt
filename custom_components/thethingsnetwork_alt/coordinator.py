@@ -4,7 +4,7 @@ from datetime import timedelta
 import logging
 
 from aiohttp import ClientError
-from ttn_client import TTNAuthError, TTNClient
+from ttn_client import TTNAuthError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST
@@ -15,13 +15,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import CONF_APP_ID, POLLING_PERIOD_S
 from .field_defaults import PlatformType, get_field_mapping
 from .helpers import platform_for_value
+from .storage import DATA_TYPE, TTNStorageClient, TTNStorageError
 
 _LOGGER = logging.getLogger(__name__)
 
 type TTNConfigEntry = ConfigEntry[TTNCoordinator]
 
 
-class TTNCoordinator(DataUpdateCoordinator[TTNClient.DATA_TYPE]):
+class TTNCoordinator(DataUpdateCoordinator[DATA_TYPE]):
     """TTN coordinator."""
 
     config_entry: TTNConfigEntry
@@ -38,11 +39,11 @@ class TTNCoordinator(DataUpdateCoordinator[TTNClient.DATA_TYPE]):
             ),
         )
 
-        self._client = TTNClient(
+        self._client = TTNStorageClient(
+            hass,
             entry.data[CONF_HOST],
             entry.data[CONF_APP_ID],
             entry.data[CONF_API_KEY],
-            push_callback=self._push_callback,
         )
 
         # Which platform owns each (device_id, field_id). See claim_field.
@@ -82,33 +83,18 @@ class TTNCoordinator(DataUpdateCoordinator[TTNClient.DATA_TYPE]):
         """Pre-assign a field's owner, e.g. from the entity registry."""
         self._field_platforms.setdefault((device_id, field_id), platform)
 
-    async def _async_update_data(self) -> TTNClient.DATA_TYPE:
+    async def _async_update_data(self) -> DATA_TYPE:
         """Fetch data from API endpoint."""
         try:
             measurements = await self._client.fetch_data()
         except TTNAuthError as err:
             _LOGGER.error("TTN authentication error: %s", err)
             raise ConfigEntryAuthFailed from err
-        except (ClientError, TimeoutError, RuntimeError) as err:
-            # RuntimeError is what ttn_client raises for a non-2xx that is not
-            # a 4xx. None of these mean the stored data is gone, so report a
-            # plain update failure instead of an unexpected-error traceback.
+        except (ClientError, TimeoutError, TTNStorageError) as err:
+            # None of these mean the stored data is gone. The client leaves
+            # its watermark alone on failure, so the next poll asks for this
+            # window again rather than skipping past it.
             raise UpdateFailed(f"Error fetching TTN data: {err}") from err
-        except (KeyError, TypeError, ValueError) as err:
-            # ttn_client parses the whole response before returning any of it,
-            # so one record it cannot read costs the entire window — every
-            # device, not just the one that sent it. Nothing here is
-            # recoverable from this side; the point is that the log names the
-            # cause instead of showing an unexpected-error traceback, and that
-            # the next poll still runs.
-            raise UpdateFailed(
-                f"TTN returned a record ttn_client could not parse, so this "
-                f"window was dropped: {err!r}"
-            ) from err
         else:
             _LOGGER.debug("fetched data: %s", measurements)
             return measurements
-
-    async def _push_callback(self, data: TTNClient.DATA_TYPE) -> None:
-        _LOGGER.debug("pushed data: %s", data)
-        self.async_set_updated_data(data)

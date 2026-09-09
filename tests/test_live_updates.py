@@ -12,6 +12,8 @@ import logging
 
 import pytest
 
+from custom_components.thethingsnetwork_alt.storage import TTNStorageError
+
 from .conftest import DEVICE_ID, TTNHarness, make_uplink
 
 RX = [{"gateway_ids": {"gateway_id": "gw-1"}, "rssi": -70, "snr": 8.2}]
@@ -436,25 +438,28 @@ async def test_stale_gps_fix_loses_to_the_registry_location(
     )
 
 
-async def test_unparseable_record_is_reported_as_an_update_failure(
+async def test_unreadable_response_is_reported_as_an_update_failure(
     ttn: TTNHarness, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """ttn_client parses the whole window before returning any of it.
+    """A storage API error must name its cause, not look like a bug here.
 
-    One record it cannot read raises out of ``fetch_data`` and costs every
-    device that window — nothing this integration can recover. What it can do
-    is name the cause: unhandled, the same failure arrives as a bare
-    "Unexpected error" traceback every polling period, which reads like a bug
-    in the integration rather than a malformed record from TTN.
+    Unhandled, the same failure arrives as a bare "Unexpected error"
+    traceback every polling period, which reads like a defect in the
+    integration rather than a bad response from TTN.
+
+    Per-record resilience is a level down, in ``tests/test_storage.py``: one
+    unreadable record no longer costs the window it arrived in.
     """
     await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
 
     with caplog.at_level(logging.DEBUG):
-        ttn.fetch_error = KeyError("uplink_message")
+        ttn.fetch_error = TTNStorageError(
+            "expected 2xx from the storage API, got 503 Service Unavailable"
+        )
         await ttn.poll()
 
     assert "Unexpected error" not in caplog.text
-    assert "could not parse" in caplog.text
+    assert "503 Service Unavailable" in caplog.text
     assert ttn.state("sensor.dev_1_temperature") == "20.5"
 
     ttn.fetch_error = None
