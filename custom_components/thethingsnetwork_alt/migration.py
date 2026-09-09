@@ -86,9 +86,7 @@ def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
         if entity_entry.domain not in ("sensor", "binary_sensor"):
             continue
 
-        ttn_device_id = _ttn_device_id_for_entity(
-            entity_entry, device_registry, app_id
-        )
+        ttn_device_id = _ttn_device_id_for_entity(entity_entry, device_registry, app_id)
         if not ttn_device_id:
             continue
 
@@ -99,9 +97,7 @@ def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
         if get_field_mapping(field_id).get("platform"):
             continue
 
-        coordinator.seed_field_platform(
-            ttn_device_id, field_id, entity_entry.domain
-        )
+        coordinator.seed_field_platform(ttn_device_id, field_id, entity_entry.domain)
 
 
 def migrate_gps_component_unique_ids(
@@ -144,9 +140,7 @@ def migrate_gps_component_unique_ids(
         if entity_entry.domain != "sensor":
             continue
 
-        ttn_device_id = _ttn_device_id_for_entity(
-            entity_entry, device_registry, app_id
-        )
+        ttn_device_id = _ttn_device_id_for_entity(entity_entry, device_registry, app_id)
         if not ttn_device_id or not (parents := gps_parents.get(ttn_device_id)):
             continue
 
@@ -335,9 +329,7 @@ async def update_registered_entity_metadata(
                     entity_entry.entity_id,
                     ", ".join(sorted(updates)),
                 )
-                entity_registry.async_update_entity(
-                    entity_entry.entity_id, **updates
-                )
+                entity_registry.async_update_entity(entity_entry.entity_id, **updates)
                 applied += 1
         except Exception:
             _LOGGER.exception(

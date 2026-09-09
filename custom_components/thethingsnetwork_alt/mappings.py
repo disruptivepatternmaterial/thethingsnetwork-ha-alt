@@ -22,8 +22,14 @@ _SUFFIX_HEURISTICS: tuple[tuple[str, dict[str, str]], ...] = (
     ("_v", {"unit": "V", "device_class": "voltage", "state_class": "measurement"}),
     ("_ma", {"unit": "mA", "device_class": "current", "state_class": "measurement"}),
     ("_a", {"unit": "A", "device_class": "current", "state_class": "measurement"}),
-    ("_lux", {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"}),
-    ("_lx", {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"}),
+    (
+        "_lux",
+        {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"},
+    ),
+    (
+        "_lx",
+        {"unit": "lx", "device_class": "illuminance", "state_class": "measurement"},
+    ),
     ("_pct", {"unit": "%", "state_class": "measurement"}),
     ("_percent", {"unit": "%", "state_class": "measurement"}),
     ("_hpa", {"unit": "hPa", "device_class": "pressure", "state_class": "measurement"}),
@@ -38,7 +44,14 @@ _SUFFIX_HEURISTICS: tuple[tuple[str, dict[str, str]], ...] = (
     ("_km", {"unit": "km", "device_class": "distance", "state_class": "measurement"}),
     ("_g", {"unit": "g", "device_class": "weight", "state_class": "measurement"}),
     ("_kg", {"unit": "kg", "device_class": "weight", "state_class": "measurement"}),
-    ("_dbm", {"unit": "dBm", "device_class": "signal_strength", "state_class": "measurement"}),
+    (
+        "_dbm",
+        {
+            "unit": "dBm",
+            "device_class": "signal_strength",
+            "state_class": "measurement",
+        },
+    ),
     ("_db", {"unit": "dB", "state_class": "measurement"}),
 )
 
@@ -225,9 +238,7 @@ def default_field_attr(field_id: str) -> SensorAttrDict:
     return attr
 
 
-def merge_field_attr(
-    decoder_attr: SensorAttrDict, field_id: str
-) -> FieldMappingDict:
+def merge_field_attr(decoder_attr: SensorAttrDict, field_id: str) -> FieldMappingDict:
     """Merge file mapping with decoder-provided _sensor_attr (decoder wins).
 
     When the field is not in `field_mappings.json` and the decoder did not

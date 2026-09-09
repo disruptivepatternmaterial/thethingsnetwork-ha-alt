@@ -4,3 +4,7 @@ pytest-homeassistant-custom-component==0.13.364
 
 # Must track the pinned runtime dependency in custom_components/thethingsnetwork_alt/manifest.json.
 ttn_client==1.3.0
+
+# Lint and format. pyproject.toml carries Home Assistant core's own rule
+# selection, which requires a recent ruff.
+ruff==0.16.6

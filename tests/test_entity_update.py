@@ -29,10 +29,12 @@ class RecordingEntity(TTNEntity):
     """TTNEntity that counts state writes instead of touching the HA core."""
 
     def __init__(self, ttn_value: TTNBaseValue, data: Any = None) -> None:
+        """Initialize around one held value and an optional first payload."""
         super().__init__(make_coordinator(data), APP_ID, ttn_value)
         self.state_writes = 0
 
     def async_write_ha_state(self) -> None:
+        """Count the write instead of reaching into the state machine."""
         self.state_writes += 1
 
     def push(self, data: Any) -> None:
@@ -42,6 +44,7 @@ class RecordingEntity(TTNEntity):
 
     @property
     def value(self) -> Any:
+        """Return the value the entity is currently holding."""
         return self._ttn_value.value
 
 

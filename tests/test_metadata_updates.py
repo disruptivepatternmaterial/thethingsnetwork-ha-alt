@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from homeassistant.helpers import entity_registry as er
-
 from custom_components.thethingsnetwork_alt import mappings, metadata
+from homeassistant.helpers import entity_registry as er
 
 from .conftest import TTNHarness, make_uplink
 
@@ -258,7 +257,8 @@ async def test_entity_moved_to_the_other_platform_is_not_stranded(
     assert ttn.state(EXTI) == "on"
 
     moved = _mappings_with(
-        "door_status", {**mappings.get_field_mapping("door_status"), "platform": "sensor"}
+        "door_status",
+        {**mappings.get_field_mapping("door_status"), "platform": "sensor"},
     )
 
     with patch.object(mappings, "_load_field_mappings", return_value=moved):

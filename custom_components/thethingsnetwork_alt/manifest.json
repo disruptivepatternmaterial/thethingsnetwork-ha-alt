@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/disruptivepatternmaterial/thethingsnetwork-ha-alt/issues",
   "loggers": ["ttn_client"],
   "requirements": ["ttn_client==1.3.0"],
-  "version": "0.7.4"
+  "version": "0.8.0"
 }

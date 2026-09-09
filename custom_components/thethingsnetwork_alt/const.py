@@ -40,6 +40,7 @@ def legacy_gps_component_field_id(parent_field_id: str, component: str) -> str:
     """Return the pre-0.7.4 axis field id, for migration and exclusions."""
     return f"{parent_field_id}_{component}"
 
+
 _INTEGRATION_VERSION = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]

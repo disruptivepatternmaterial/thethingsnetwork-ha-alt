@@ -9,13 +9,9 @@ from ttn_client import TTNSensorAttribute
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_APP_ID, PLATFORMS, TTN_API_HOST, _INTEGRATION_VERSION
+from .const import _INTEGRATION_VERSION, CONF_APP_ID, PLATFORMS, TTN_API_HOST
 from .coordinator import TTNConfigEntry, TTNCoordinator
-from .exclusions import (
-    is_excluded,
-    load_exclusions_summary,
-    reload_exclusions,
-)
+from .exclusions import is_excluded, load_exclusions_summary, reload_exclusions
 from .field_defaults import reload_field_mappings
 from .mappings import _load_field_mappings, get_field_mapping
 from .metadata import load_device_names, reload_device_names
@@ -56,8 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
     entry.runtime_data = coordinator
 
     _LOGGER.info(
-        "The Things Network HA-Alt v%s loaded "
-        "(%d field mappings, %d device names, %s)",
+        "The Things Network HA-Alt v%s loaded (%d field mappings, %d device names, %s)",
         _INTEGRATION_VERSION,
         len(_load_field_mappings()),
         len(load_device_names()),
