@@ -23,16 +23,15 @@ from ttn_client import TTNBaseValue
 from ttn_client.parsers import ttn_parse
 from ttn_client.parsers.default import default_parser
 
-from homeassistant.const import CONF_API_KEY, CONF_HOST
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.util import dt as dt_util
-
 from custom_components.thethingsnetwork_alt.const import (
     CONF_APP_ID,
     DOMAIN,
     POLLING_PERIOD_S,
 )
+from homeassistant.const import CONF_API_KEY, CONF_HOST
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.util import dt as dt_util
 
 APP_ID = "test-app"
 DEVICE_ID = "dev-1"
@@ -114,11 +113,14 @@ class TTNHarness:
     """Drive the real integration through real coordinator polling cycles.
 
     Nothing about the entity or platform layer is mocked: only the network
-    call at the very edge (``TTNClient.fetch_data``) is replaced, so every
-    assertion runs against Home Assistant's own state machine.
+    call at the very edge (``TTNStorageClient.fetch_data``) is replaced, so
+    every assertion runs against Home Assistant's own state machine. The
+    client's own behaviour is covered in ``test_storage.py``, which drives
+    it against a mocked HTTP layer instead.
     """
 
     def __init__(self, hass: HomeAssistant, entry: MockConfigEntry) -> None:
+        """Initialize the harness around an un-added config entry."""
         self.hass = hass
         self.entry = entry
         self.fetch_error: Exception | None = None
@@ -251,7 +253,7 @@ def ttn(hass: HomeAssistant) -> Iterator[TTNHarness]:
         return client
 
     with patch(
-        "custom_components.thethingsnetwork_alt.coordinator.TTNClient",
+        "custom_components.thethingsnetwork_alt.coordinator.TTNStorageClient",
         side_effect=_client_factory,
     ):
         yield harness
