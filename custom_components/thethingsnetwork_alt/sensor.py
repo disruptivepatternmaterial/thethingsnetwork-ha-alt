@@ -26,7 +26,13 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from .const import CONF_APP_ID, DOMAIN
+from .const import (
+    CONF_APP_ID,
+    DOMAIN,
+    GPS_COMPONENTS,
+    gps_component_field_id,
+    legacy_gps_component_field_id,
+)
 from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNCachedEntity, TTNEntity
 from .exclusions import is_excluded
@@ -63,9 +69,6 @@ _META_KINDS: Final[tuple[str, ...]] = (
     _META_LAST_SEEN,
     _META_GATEWAY,
 )
-
-# GPS sub-component suffixes for TTNDeviceTrackerValue expansion.
-_GPS_COMPONENTS: Final[tuple[str, ...]] = ("latitude", "longitude", "altitude")
 
 # Metadata keys that promise Home Assistant a numeric state.
 _NUMERIC_ATTR_KEYS: Final[frozenset[str]] = frozenset(
@@ -260,14 +263,18 @@ def _add_gps_components(
     device_id = str(ttn_value.device_id)
     parent_field_id = str(ttn_value.field_id)
 
-    for component in _GPS_COMPONENTS:
-        synthetic_field_id = f"{parent_field_id}_{component}"
+    for component in GPS_COMPONENTS:
+        synthetic_field_id = gps_component_field_id(parent_field_id, component)
         key = (device_id, synthetic_field_id)
 
         if key in sensors:
             continue
 
-        if is_excluded(device_id, synthetic_field_id):
+        # The pre-0.7.4 name is still honoured so an existing exclusion of
+        # e.g. "gps_altitude" keeps suppressing the axis it was written for.
+        if is_excluded(device_id, synthetic_field_id) or is_excluded(
+            device_id, legacy_gps_component_field_id(parent_field_id, component)
+        ):
             sensors.add(key)
             continue
 
