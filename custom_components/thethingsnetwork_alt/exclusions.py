@@ -21,9 +21,14 @@ from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
 
-_EXCLUSIONS_CACHE: tuple[frozenset[str], tuple[str, ...], dict[
-    str, tuple[frozenset[str], tuple[str, ...]]
-]] | None = None
+_EXCLUSIONS_CACHE: (
+    tuple[
+        frozenset[str],
+        tuple[str, ...],
+        dict[str, tuple[frozenset[str], tuple[str, ...]]],
+    ]
+    | None
+) = None
 
 
 def _split_patterns(raw: object) -> tuple[frozenset[str], tuple[str, ...]]:
