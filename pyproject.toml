@@ -1,0 +1,8 @@
+# This file configures the test and lint tooling only. The integration is
+# installed by HACS as a plain custom_components/ folder, not as a package, so
+# there is deliberately no [project] table here.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra"
