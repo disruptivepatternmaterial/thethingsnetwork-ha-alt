@@ -2,37 +2,38 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 import logging
 from typing import Final
 
 from ttn_client import (
+    TTNBinarySensorValue,
     TTNDeviceTrackerValue,
     TTNSensorAttribute,
     TTNSensorValue,
 )
 
 from homeassistant.components.sensor import (
+    NON_NUMERIC_DEVICE_CLASSES,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import MAX_LENGTH_STATE_STATE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_APP_ID, DOMAIN
 from .coordinator import TTNConfigEntry, TTNCoordinator
-from .entity import TTNEntity
+from .entity import TTNCachedEntity, TTNEntity
 from .exclusions import is_excluded
 from .field_defaults import (
     FieldMappingDict,
     SensorAttrDict,
     default_field_attr,
-    get_field_platform,
     merge_field_attr,
 )
 from .helpers import extract_sensor_attr, newest_uplink_carrier, parse_enum
@@ -65,6 +66,42 @@ _META_KINDS: Final[tuple[str, ...]] = (
 
 # GPS sub-component suffixes for TTNDeviceTrackerValue expansion.
 _GPS_COMPONENTS: Final[tuple[str, ...]] = ("latitude", "longitude", "altitude")
+
+# Metadata keys that promise Home Assistant a numeric state.
+_NUMERIC_ATTR_KEYS: Final[frozenset[str]] = frozenset(
+    {"unit", "device_class", "state_class", "suggested_display_precision"}
+)
+
+
+def _implies_numeric(attr: Mapping[str, object]) -> bool:
+    """Return True when this metadata makes Home Assistant expect a number.
+
+    Mirrors ``homeassistant.components.sensor._numeric_state_expected``: any
+    unit, state class or display precision means numeric, and so does a
+    device class other than the handful that describe non-numeric states.
+    """
+    if attr.get("unit") or attr.get("state_class"):
+        return True
+    if attr.get("suggested_display_precision") is not None:
+        return True
+
+    device_class = parse_enum(SensorDeviceClass, attr.get("device_class"))
+    return device_class is not None and device_class not in NON_NUMERIC_DEVICE_CLASSES
+
+
+def _is_numeric_reading(value: object) -> bool:
+    """Return True when ``value`` can be stored on a numeric sensor."""
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _validate_sensor_attr(
@@ -104,6 +141,12 @@ async def async_setup_entry(
     """Set up TTN sensors from a config entry."""
     coordinator = entry.runtime_data
     sensors: set[tuple[str, str]] = set()
+    data_sensors: dict[tuple[str, str], TtnDataSensor] = {}
+    # Latest ``_sensor_attr`` seen for each field, kept across fetch windows.
+    # A decoder puts it on the uplinks it chooses, which need not be the ones
+    # carrying the field, so metadata read from any window has to survive to
+    # whichever window creates the entity.
+    decoder_attrs: dict[tuple[str, str], SensorAttrDict] = {}
     app_id = entry.data[CONF_APP_ID]
 
     def _async_measurement_listener() -> None:
@@ -115,7 +158,7 @@ async def async_setup_entry(
         new_entities: list[SensorEntity] = []
 
         for device_id, device_uplinks in data.items():
-            sensor_attr = extract_sensor_attr(device_uplinks)
+            _remember_decoder_attr(device_id, extract_sensor_attr(device_uplinks))
             device_name = get_device_name(device_id)
 
             # Add per-device diagnostic sensors once.
@@ -160,31 +203,46 @@ async def async_setup_entry(
                     )
                     continue
 
-                if (device_id, field_id) in sensors:
+                key = (device_id, field_id)
+                if key in sensors:
                     continue
 
-                if not isinstance(ttn_value, TTNSensorValue):
+                if coordinator.resolve_platform(device_id, field_id, ttn_value) != (
+                    "sensor"
+                ):
                     continue
 
-                if get_field_platform(field_id) == "binary_sensor":
-                    continue
-
-                attr = merge_field_attr(sensor_attr.get(field_id, {}), field_id)
+                decoder_attr = decoder_attrs.get(key, {})
+                attr = merge_field_attr(decoder_attr, field_id)
                 _validate_sensor_attr(attr, field_id, device_id=device_id)
 
-                new_entities.append(
-                    TtnDataSensor(
-                        coordinator=coordinator,
-                        app_id=app_id,
-                        ttn_value=ttn_value,
-                        attr=attr,
-                        device_name=device_name,
-                    )
+                sensor = TtnDataSensor(
+                    coordinator=coordinator,
+                    app_id=app_id,
+                    ttn_value=ttn_value,
+                    attr=attr,
+                    decoder_attr=decoder_attr,
+                    device_name=device_name,
                 )
-                sensors.add((device_id, field_id))
+                new_entities.append(sensor)
+                data_sensors[key] = sensor
+                sensors.add(key)
 
         if new_entities:
             async_add_entities(new_entities)
+
+    def _remember_decoder_attr(
+        device_id: str, sensor_attr: dict[str, SensorAttrDict]
+    ) -> None:
+        """Record this window's ``_sensor_attr`` and push it to live entities."""
+        for field_id, decoder_attr in sensor_attr.items():
+            key = (device_id, field_id)
+            if not decoder_attr or decoder_attrs.get(key) == decoder_attr:
+                continue
+
+            decoder_attrs[key] = decoder_attr
+            if existing := data_sensors.get(key):
+                existing.apply_decoder_attr(decoder_attr)
 
     entry.async_on_unload(coordinator.async_add_listener(_async_measurement_listener))
     _async_measurement_listener()
@@ -236,55 +294,145 @@ def _add_gps_components(
 class TtnDataSensor(TTNEntity, SensorEntity):
     """Representation of a TTN sensor."""
 
-    _ttn_value: TTNSensorValue
+    _ttn_value: TTNSensorValue | TTNBinarySensorValue
 
     def __init__(
         self,
         coordinator: TTNCoordinator,
         app_id: str,
-        ttn_value: TTNSensorValue,
-        attr: SensorAttrDict,
+        ttn_value: TTNSensorValue | TTNBinarySensorValue,
+        attr: SensorAttrDict | FieldMappingDict,
+        decoder_attr: SensorAttrDict | None = None,
         device_name: str | None = None,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, app_id, ttn_value, device_name=device_name)
         self._ttn_value = ttn_value
+        self._warned_truncation = False
+        self._warned_non_numeric = False
+        self._warned_text_metadata = False
+        self._decoder_attr: SensorAttrDict = dict(decoder_attr or {})
+        # The metadata the field is described with, kept unmodified. What
+        # reaches Home Assistant is derived from it by _effective_attr.
+        self._metadata: SensorAttrDict | FieldMappingDict = attr
+        self._seen_numeric_reading = _is_numeric_reading(ttn_value.value)
+        self._apply_attr()
 
-        if unit := attr.get("unit"):
-            self._attr_native_unit_of_measurement = unit
+    def apply_decoder_attr(self, decoder_attr: SensorAttrDict) -> None:
+        """Apply ``_sensor_attr`` metadata that arrived after entity creation.
 
-        if device_class := parse_enum(SensorDeviceClass, attr.get("device_class")):
-            self._attr_device_class = device_class
+        A decoder is not obliged to put ``_sensor_attr`` on every uplink, and
+        the entity is created from whichever uplink first carried the field.
+        Without this the unit and device class stay missing until Home
+        Assistant is restarted.
+        """
+        if not decoder_attr or decoder_attr == self._decoder_attr:
+            return
 
-        if state_class := parse_enum(SensorStateClass, attr.get("state_class")):
-            self._attr_state_class = state_class
+        self._decoder_attr = dict(decoder_attr)
+        self._metadata = merge_field_attr(decoder_attr, self.field_id)
+        self._apply_attr()
+        if self.hass is not None:
+            self.async_write_ha_state()
 
-        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
-            self._attr_entity_category = entity_category
+    def _adopt(self, update: TTNSensorValue | TTNBinarySensorValue) -> None:  # type: ignore[override]
+        """Restore suppressed numeric metadata once the field reports a number."""
+        super()._adopt(update)
 
-        if precision := attr.get("suggested_display_precision"):
-            try:
-                self._attr_suggested_display_precision = int(precision)
-            except (ValueError, TypeError):
-                _LOGGER.warning(
-                    "Invalid suggested_display_precision for %s (unique_id=%s): %r",
-                    ttn_value.field_id,
-                    self.unique_id,
-                    precision,
-                )
+        if self._seen_numeric_reading or not _is_numeric_reading(update.value):
+            return
 
-        if friendly_name := attr.get("friendly_name"):
-            self._attr_name = friendly_name
+        self._seen_numeric_reading = True
+        self._apply_attr()
 
-        # Use getattr to avoid AttributeError on HA's CachedProperties descriptor
-        # when _attr_device_class hasn't been set yet (mangled __attr_X cache key).
-        current_dc = getattr(self, "_attr_device_class", None)
-        self._parse_timestamp = (
-            current_dc == SensorDeviceClass.TIMESTAMP
-            or is_timestamp_field(ttn_value.field_id)
+    def _apply_attr(self) -> None:
+        """Set every Home Assistant attribute this sensor derives from metadata.
+
+        Assigns all of them, including to None, so re-applying later metadata
+        cannot leave a stale value behind from the previous set.
+        """
+        attr = self._effective_attr()
+
+        self._attr_native_unit_of_measurement = attr.get("unit")
+        self._attr_device_class = parse_enum(
+            SensorDeviceClass, attr.get("device_class")
         )
-        if self._parse_timestamp and current_dc != SensorDeviceClass.TIMESTAMP:
+        self._attr_state_class = parse_enum(SensorStateClass, attr.get("state_class"))
+        self._attr_entity_category = parse_enum(
+            EntityCategory, attr.get("entity_category")
+        )
+        self._attr_suggested_display_precision = self._parse_precision(
+            attr.get("suggested_display_precision")
+        )
+        self._attr_name = attr.get("friendly_name") or self.field_id
+
+        self._parse_timestamp = (
+            self._attr_device_class == SensorDeviceClass.TIMESTAMP
+            or is_timestamp_field(self.field_id)
+        )
+        if self._parse_timestamp:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def _parse_precision(self, precision: object) -> int | None:
+        """Return the configured display precision, or None when unusable.
+
+        ``0`` is a legitimate precision — "show this as a whole number" — so
+        it must not be read as "unset" the way a falsy check would.
+        """
+        if precision is None or precision == "":
+            return None
+        try:
+            return int(precision)  # type: ignore[arg-type]
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Invalid suggested_display_precision for %s (unique_id=%s): %r",
+                self.field_id,
+                self.unique_id,
+                precision,
+            )
+            return None
+
+    def _effective_attr(self) -> SensorAttrDict | FieldMappingDict:
+        """Return the metadata to publish, given what this field actually reports.
+
+        Home Assistant refuses a non-numeric state on a sensor whose unit,
+        device class or state class promises a number, and that refusal
+        aborts the state write — the entity is never added, or stops moving.
+        The suffix heuristics make this easy to hit by accident: a status
+        field named ``foo_c`` is read as degrees Celsius.
+
+        So a field that has never reported a number is published without the
+        numeric metadata, whatever the mapping claims. The first numeric
+        reading settles the question the other way and is not revisited: from
+        then on the field is a measurement that occasionally cannot be read,
+        and ``native_value`` reports those readings as unknown rather than
+        tearing the unit off a sensor that has history and statistics behind
+        it.
+        """
+        attr = self._metadata
+        if self._seen_numeric_reading or not _implies_numeric(attr):
+            return attr
+
+        if not self._warned_text_metadata:
+            self._warned_text_metadata = True
+            _LOGGER.warning(
+                "Field %s on %s reports text (%r) but is described as a numeric "
+                "measurement (unit=%r device_class=%r state_class=%r). Keeping it "
+                "as a plain text sensor; correct the mapping in "
+                "field_mappings.json or the decoder's _sensor_attr to silence this",
+                self.field_id,
+                self.device_id,
+                self._ttn_value.value,
+                attr.get("unit"),
+                attr.get("device_class"),
+                attr.get("state_class"),
+            )
+
+        return {
+            key: value
+            for key, value in attr.items()
+            if key not in _NUMERIC_ATTR_KEYS
+        }  # type: ignore[return-value]
 
     @property
     def native_value(self) -> StateType:
@@ -292,7 +440,74 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         value = self._ttn_value.value
         if self._parse_timestamp:
             return parse_ttn_timestamp(value)
+        if isinstance(value, bool):
+            # ttn_client types the value from the decoded JSON, so a field
+            # that normally reports 0/1 arrives as a bool on any uplink where
+            # the decoder emitted false/true. Home Assistant would record the
+            # string "True", which no numeric sensor can chart or keep
+            # statistics for. 0/1 carries the identical reading.
+            return int(value)
+        if isinstance(value, str):
+            if self._is_numeric_sensor and not _is_numeric_reading(value):
+                self._warn_text_reading(value)
+                return None
+            if len(value) > MAX_LENGTH_STATE_STATE:
+                return self._truncated(value)
         return value
+
+    @property
+    def _is_numeric_sensor(self) -> bool:
+        """Return True when Home Assistant will demand a number from us."""
+        return _implies_numeric(
+            {
+                "unit": self._attr_native_unit_of_measurement,
+                "device_class": self._attr_device_class,
+                "state_class": self._attr_state_class,
+                "suggested_display_precision": self._attr_suggested_display_precision,
+            }
+        )
+
+    def _warn_text_reading(self, value: str) -> None:
+        """Warn once that a numeric sensor cannot hold this reading.
+
+        Only reachable when a field that has reported numbers before sends
+        text, e.g. an error string in place of a measurement. The caller
+        reports unknown, which keeps the entity alive; raising out of
+        ``native_value`` would abort the state write and freeze the sensor at
+        its last reading with only a stack trace in the log.
+        """
+        if self._warned_non_numeric:
+            return
+
+        self._warned_non_numeric = True
+        _LOGGER.warning(
+            "Ignoring %r from %s: the sensor is configured as a numeric "
+            "measurement and cannot hold text",
+            value,
+            self.unique_id,
+        )
+
+    def _truncated(self, value: str) -> str:
+        """Shorten a reading Home Assistant would otherwise refuse outright.
+
+        A state over ``MAX_LENGTH_STATE_STATE`` raises out of the state
+        machine, which leaves the sensor sitting at ``unknown`` — the whole
+        reading is lost. Keeping the leading characters loses less. Decoders
+        that emit replay buffers (Dragino ``datalog*``) belong in
+        ``field_exclusions.json`` instead.
+        """
+        if not self._warned_truncation:
+            self._warned_truncation = True
+            _LOGGER.warning(
+                "Truncating %s: field %s reported %d characters and Home "
+                "Assistant caps a state at %d. Add it to "
+                "field_exclusions.json if it is not a reading",
+                self.unique_id,
+                self.field_id,
+                len(value),
+                MAX_LENGTH_STATE_STATE,
+            )
+        return value[:MAX_LENGTH_STATE_STATE]
 
 
 class TtnGpsComponentSensor(TTNEntity, SensorEntity):
@@ -326,7 +541,8 @@ class TtnGpsComponentSensor(TTNEntity, SensorEntity):
             self._attr_state_class = state_class
         if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
             self._attr_entity_category = entity_category
-        if precision := attr.get("suggested_display_precision"):
+        precision = attr.get("suggested_display_precision")
+        if precision is not None and precision != "":
             try:
                 self._attr_suggested_display_precision = int(precision)
             except (ValueError, TypeError):
@@ -344,7 +560,7 @@ class TtnGpsComponentSensor(TTNEntity, SensorEntity):
         return None
 
 
-class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
+class TtnMetaSensor(TTNCachedEntity, SensorEntity):
     """Per-device diagnostic synthesized from the latest uplink rx_metadata."""
 
     _attr_has_entity_name = True
@@ -421,13 +637,11 @@ class TtnMetaSensor(CoordinatorEntity[TTNCoordinator], SensorEntity):
         uplink = sample.uplink or {}
 
         if self._kind == _META_LAST_SEEN:
-            received_at = uplink.get("received_at")
-            if not received_at:
-                return None
-            try:
-                return datetime.fromisoformat(str(received_at).replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                return None
+            # parse_ttn_timestamp forces an offset-less stamp to UTC. Home
+            # Assistant rejects a naive datetime on a timestamp sensor, and
+            # that ValueError aborts the entity's state write — on the first
+            # such uplink the sensor fails to be added at all.
+            return parse_ttn_timestamp(uplink.get("received_at"))
 
         rx_metadata = (uplink.get("uplink_message") or {}).get("rx_metadata") or []
         if not rx_metadata:

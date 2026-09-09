@@ -273,5 +273,11 @@ def value_is_on(value: object, mapping: FieldMappingDict) -> bool | None:
             return True
         if value in state_off:
             return False
+        if not state_on and not state_off:
+            # A field the decoder normally sends as true/false arrives as 1/0
+            # whenever it emits a number instead, and the entity already
+            # belongs to the binary_sensor platform. 0 is off and anything
+            # else is on — the same reading the bool carried.
+            return bool(value)
 
     return None
