@@ -40,7 +40,9 @@ def parse_ttn_timestamp(value: object) -> datetime | None:
         if not text:
             return None
         try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            # fromisoformat has read a trailing "Z" since 3.11. Substituting
+            # it by hand rewrote every "Z" in the string, not just the offset.
+            parsed = datetime.fromisoformat(text)
         except ValueError:
             return None
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)

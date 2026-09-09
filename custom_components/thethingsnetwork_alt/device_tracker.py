@@ -45,15 +45,11 @@ _META_LOCATION: Final = "_meta_location"
 # uplink is considered stale and loses to the registry location.
 _GPS_STALE_AFTER: Final = timedelta(hours=24)
 
-_LAT_FIELD_IDS: Final[frozenset[str]] = frozenset(
-    {"latitude", "lat", "gps_latitude"}
-)
+_LAT_FIELD_IDS: Final[frozenset[str]] = frozenset({"latitude", "lat", "gps_latitude"})
 _LON_FIELD_IDS: Final[frozenset[str]] = frozenset(
     {"longitude", "lon", "lng", "gps_longitude"}
 )
-_ALT_FIELD_IDS: Final[frozenset[str]] = frozenset(
-    {"altitude", "alt", "gps_altitude"}
-)
+_ALT_FIELD_IDS: Final[frozenset[str]] = frozenset({"altitude", "alt", "gps_altitude"})
 
 
 async def async_setup_entry(
@@ -209,9 +205,7 @@ class TtnDeviceTracker(TTNCachedEntity, TrackerEntity):
         return {
             "latitude": float(latitude),
             "longitude": float(longitude),
-            "altitude": float(altitude)
-            if isinstance(altitude, (int, float))
-            else None,
+            "altitude": float(altitude) if isinstance(altitude, (int, float)) else None,
             "source": "registry",
         }
 
@@ -270,9 +264,7 @@ class TtnDeviceTracker(TTNCachedEntity, TrackerEntity):
         if newest is None:
             return None
 
-        carrier_received_at = (
-            received_at_utc(carrier) if carrier is not None else None
-        )
+        carrier_received_at = received_at_utc(carrier) if carrier is not None else None
         if (
             carrier_received_at is not None
             and newest_received_at is not None

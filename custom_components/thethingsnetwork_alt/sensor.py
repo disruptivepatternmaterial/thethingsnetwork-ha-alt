@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from datetime import datetime
 import logging
 from typing import Final
@@ -436,9 +437,7 @@ class TtnDataSensor(TTNEntity, SensorEntity):
             )
 
         return {
-            key: value
-            for key, value in attr.items()
-            if key not in _NUMERIC_ATTR_KEYS
+            key: value for key, value in attr.items() if key not in _NUMERIC_ATTR_KEYS
         }  # type: ignore[return-value]
 
     @property
@@ -550,10 +549,8 @@ class TtnGpsComponentSensor(TTNEntity, SensorEntity):
             self._attr_entity_category = entity_category
         precision = attr.get("suggested_display_precision")
         if precision is not None and precision != "":
-            try:
+            with suppress(ValueError, TypeError):
                 self._attr_suggested_display_precision = int(precision)
-            except (ValueError, TypeError):
-                pass
 
     @property
     def native_value(self) -> StateType:
