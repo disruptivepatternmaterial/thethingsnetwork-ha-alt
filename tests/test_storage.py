@@ -8,6 +8,7 @@ what happens to the window a failed request never read.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 import json
 import logging
@@ -16,9 +17,11 @@ from typing import Any
 import pytest
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from ttn_client import TTNAuthError
+from ttn_client.parsers import ttn_parse
 
 from custom_components.thethingsnetwork_alt.storage import (
     FIRST_FETCH,
+    MAX_WINDOW,
     TTNStorageClient,
     TTNStorageError,
 )
@@ -30,16 +33,18 @@ from .conftest import APP_ID, DEVICE_ID, make_uplink
 HOST = "eu1.cloud.thethings.network"
 URL = f"https://{HOST}/api/v3/as/applications/{APP_ID}/packages/storage/uplink_message"
 
+# Edits one raw record in place to make it unreadable a particular way.
+type Mutation = Callable[[dict[str, Any]], None]
 
-def stream(*records: Any) -> str:
+
+def stream(*records: dict[str, Any]) -> str:
     """Render the newline-delimited record stream the storage API returns."""
-    lines = []
-    for record in records:
-        if isinstance(record, str):
-            lines.append(record)
-        else:
-            lines.append(json.dumps({"result": record}))
-    return "\n".join(lines) + "\n"
+    return "".join(json.dumps({"result": record}) + "\n" for record in records)
+
+
+def raw_stream(*lines: str) -> str:
+    """Render a stream of literal lines, for records that are not records."""
+    return "".join(line + "\n" for line in lines)
 
 
 def client(hass: HomeAssistant, **kwargs: Any) -> TTNStorageClient:
@@ -47,10 +52,10 @@ def client(hass: HomeAssistant, **kwargs: Any) -> TTNStorageClient:
     return TTNStorageClient(hass, HOST, APP_ID, "not-a-real-key", **kwargs)
 
 
-def last_window_seconds(mock: AiohttpClientMocker) -> int:
-    """Return the ``last=Ns`` the most recent request asked for."""
-    query = mock.mock_calls[-1][1].query
-    return int(str(query["last"]).removesuffix("s"))
+def requested_window(mock: AiohttpClientMocker, index: int = -1) -> int:
+    """Return the ``last=Ns`` seconds one request asked for."""
+    _method, url, _data, _headers = mock.mock_calls[index]
+    return int(str(url.query["last"]).removesuffix("s"))
 
 
 async def test_good_stream_is_parsed_per_device(
@@ -130,10 +135,10 @@ async def test_bad_record_does_not_discard_its_neighbours(
     """
     aioclient_mock.get(
         URL,
-        text=stream(
-            make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}),
-            bad,
-            make_uplink("2026-09-01T00:00:30Z", {"humidity": 44}, "dev-2"),
+        text=(
+            stream(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+            + raw_stream(bad)
+            + stream(make_uplink("2026-09-01T00:00:30Z", {"humidity": 44}, "dev-2"))
         ),
     )
 
@@ -145,58 +150,67 @@ async def test_bad_record_does_not_discard_its_neighbours(
     assert "Skipped 1 unreadable record" in caplog.text
 
 
-def hostile_record(kind: str) -> dict[str, Any]:
-    """Return a record that makes ``ttn_parse`` raise, by a reachable route.
+def drop(key: str) -> Mutation:
+    """Return a mutation removing a top-level key."""
+    return lambda record: record.pop(key)
 
-    Every one of these is valid JSON a real deployment can produce, and each
-    raises a different exception type out of ``ttn_client`` — which is why
-    the client's per-record guard cannot be a curated list of exceptions.
-    """
-    record = make_uplink("2026-09-01T00:00:10Z", {"temperature": 21.0})
-    if kind == "no-uplink-message":
-        del record["uplink_message"]  # KeyError
-    elif kind == "null-uplink-message":
-        record["uplink_message"] = None  # AttributeError
-    elif kind == "decoded-payload-is-a-list":
-        record["uplink_message"]["decoded_payload"] = []  # AttributeError
-    elif kind == "decoded-payload-is-a-string":
-        record["uplink_message"]["decoded_payload"] = "T=21"  # AttributeError
-    elif kind == "sensecap-without-err":
+
+def replace(key: str, value: Any) -> Mutation:
+    """Return a mutation replacing a top-level key."""
+
+    def mutate(record: dict[str, Any]) -> None:
+        record[key] = value
+
+    return mutate
+
+
+def set_decoded(value: Any) -> Mutation:
+    """Return a mutation replacing decoded_payload wholesale."""
+
+    def mutate(record: dict[str, Any]) -> None:
+        record["uplink_message"]["decoded_payload"] = value
+
+    return mutate
+
+
+def sensecap(decoded: dict[str, Any]) -> Mutation:
+    """Return a mutation making a record parse down the Sensecap path."""
+
+    def mutate(record: dict[str, Any]) -> None:
         record["uplink_message"]["version_ids"] = {"brand_id": "sensecap"}
-        record["uplink_message"]["decoded_payload"] = {"valid": True}  # KeyError
-    elif kind == "sensecap-messages-not-a-list":
-        record["uplink_message"]["version_ids"] = {"brand_id": "sensecap"}
-        record["uplink_message"]["decoded_payload"] = {
-            "valid": True,
-            "err": 0,
-            "payload": "x",
-            "messages": 5,  # TypeError
-        }
-    else:
-        raise AssertionError(kind)
-    return record
+        record["uplink_message"]["decoded_payload"] = decoded
+
+    return mutate
 
 
-@pytest.mark.parametrize(
-    "kind",
-    [
-        "no-uplink-message",
-        "null-uplink-message",
-        "decoded-payload-is-a-list",
-        "decoded-payload-is-a-string",
-        "sensecap-without-err",
-        "sensecap-messages-not-a-list",
-    ],
-)
+# Records that make ttn_parse raise, each by a route a real deployment can
+# produce, and each raising a different exception type. That spread is the
+# reason the client's per-record guard cannot be a curated exception list.
+HOSTILE: dict[str, Mutation] = {
+    "no-uplink-message": drop("uplink_message"),  # KeyError
+    "null-uplink-message": replace("uplink_message", None),  # AttributeError
+    "decoded-payload-is-a-list": set_decoded([]),  # AttributeError
+    "decoded-payload-is-a-string": set_decoded("T=21"),  # AttributeError
+    "sensecap-without-err": sensecap({"valid": True}),  # KeyError
+    "sensecap-messages-not-a-list": sensecap(
+        {"valid": True, "err": 0, "payload": "x", "messages": 5}  # TypeError
+    ),
+}
+
+
+@pytest.mark.parametrize("mutate", HOSTILE.values(), ids=HOSTILE.keys())
 async def test_record_the_parser_rejects_does_not_abort_the_window(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, kind: str
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mutate: Mutation
 ) -> None:
     """A decoder one device disagrees with must not silence the others."""
+    hostile = make_uplink("2026-09-01T00:00:10Z", {"temperature": 21.0})
+    mutate(hostile)
+
     aioclient_mock.get(
         URL,
         text=stream(
             make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}),
-            hostile_record(kind),
+            hostile,
             make_uplink("2026-09-01T00:00:30Z", {"humidity": 44}, "dev-2"),
         ),
     )
@@ -207,11 +221,54 @@ async def test_record_the_parser_rejects_does_not_abort_the_window(
     assert data["dev-2"]["humidity"].value == 44
 
 
+@pytest.mark.parametrize("mutate", HOSTILE.values(), ids=HOSTILE.keys())
+def test_hostile_record_really_does_break_the_parser(mutate: Mutation) -> None:
+    """Guard the guard: a mutation that stopped raising proves nothing.
+
+    These records are only worth streaming if ``ttn_parse`` still rejects
+    them, and a ttn_client upgrade could quietly change that — leaving the
+    tests above passing for the wrong reason.
+    """
+    record = make_uplink("2026-09-01T00:00:10Z", {"temperature": 21.0})
+    mutate(record)
+
+    with pytest.raises(Exception):  # noqa: B017 - any type counts, that is the point
+        ttn_parse(record)
+
+
+async def test_uplink_with_nothing_decoded_creates_no_device_entry(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A device with no payload formatter must not become a device here.
+
+    ``ttn_parse`` returns no values for an uplink with no ``decoded_payload``,
+    which is what every device without a payload formatter sends. Recording
+    the device anyway gave it a device registry entry, four diagnostic
+    sensors and a device tracker — all permanently unknown, because each of
+    those reads its value off a parsed value's uplink and there are none.
+    """
+    bare = make_uplink("2026-09-01T00:00:00Z", {})
+    del bare["uplink_message"]["decoded_payload"]
+
+    aioclient_mock.get(
+        URL,
+        text=stream(
+            bare,
+            make_uplink("2026-09-01T00:00:30Z", {"humidity": 44}, "dev-2"),
+        ),
+    )
+
+    data = await client(hass).fetch_data()
+
+    assert DEVICE_ID not in data
+    assert data["dev-2"]["humidity"].value == 44
+
+
 async def test_a_window_of_only_bad_records_is_not_an_error(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     """Nothing readable is an empty window, not a failed fetch."""
-    aioclient_mock.get(URL, text=stream("{not json", "{also not json"))
+    aioclient_mock.get(URL, text=raw_stream("{not json", "{also not json"))
 
     assert await client(hass).fetch_data() == {}
 
@@ -243,7 +300,7 @@ async def test_first_fetch_reaches_back_a_day(
 
     await client(hass).fetch_data()
 
-    assert last_window_seconds(aioclient_mock) == int(FIRST_FETCH.total_seconds())
+    assert requested_window(aioclient_mock) == int(FIRST_FETCH.total_seconds())
 
 
 async def test_second_fetch_asks_only_for_the_time_since_the_first(
@@ -258,7 +315,7 @@ async def test_second_fetch_asks_only_for_the_time_since_the_first(
     await ttn.fetch_data()
 
     # 60s elapsed plus the overlap margin.
-    assert last_window_seconds(aioclient_mock) == 120
+    assert requested_window(aioclient_mock) == 120
 
 
 async def test_failed_fetch_leaves_the_window_to_be_re_read(
@@ -287,7 +344,7 @@ async def test_failed_fetch_leaves_the_window_to_be_re_read(
     await ttn.fetch_data()
 
     # All four minutes of failure are re-requested, not skipped.
-    assert last_window_seconds(aioclient_mock) == 240 + 60
+    assert requested_window(aioclient_mock) == 240 + 60
 
 
 async def test_auth_failure_also_leaves_the_watermark_alone(
@@ -319,7 +376,7 @@ async def test_a_long_outage_does_not_ask_for_an_unbounded_window(
     freezer.tick(timedelta(days=7))
     await ttn.fetch_data()
 
-    assert last_window_seconds(aioclient_mock) == int(FIRST_FETCH.total_seconds())
+    assert requested_window(aioclient_mock) == int(MAX_WINDOW.total_seconds())
 
 
 # --- Response status handling ----------------------------------------------

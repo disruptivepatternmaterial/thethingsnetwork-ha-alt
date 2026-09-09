@@ -93,11 +93,13 @@ def make_coordinator(data: Any = None) -> MagicMock:
 
 
 def window(*uplinks: dict[str, Any]) -> dict[str, dict[str, TTNBaseValue]]:
-    """Merge raw uplinks exactly the way ``TTNClient.fetch_data`` does.
+    """Merge raw uplinks the way ``TTNStorageClient._consume`` does.
 
     The storage API streams uplinks oldest-first and the client folds them
-    per device with ``|=``, so a field present in several uplinks keeps the
-    newest one and a field present in only an older uplink survives.
+    per device, so a field present in several uplinks keeps the newest one
+    and a field present in only an older uplink survives. An uplink with
+    nothing decoded contributes no fields and no device entry — mirrored
+    here, and asserted against the real client in ``test_storage.py``.
     """
     merged: dict[str, dict[str, TTNBaseValue]] = {}
     for uplink in uplinks:

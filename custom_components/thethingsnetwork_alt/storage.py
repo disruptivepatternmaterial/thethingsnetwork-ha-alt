@@ -54,14 +54,39 @@ _TIMEOUT: Final = ClientTimeout(total=10 * 60)
 # re-delivered uplink by comparing receipt stamps.
 _FETCH_MARGIN: Final = timedelta(seconds=60)
 
-# How far back the very first fetch reaches, and the ceiling on any single
-# window. Without a ceiling, Home Assistant being off for a week would ask
-# TTN for a week in one request.
+# How far back the very first fetch reaches.
 FIRST_FETCH: Final = timedelta(hours=24)
+
+# The ceiling on any single window. Without it, Home Assistant having been
+# off for a week would ask TTN for a week in one request.
+MAX_WINDOW: Final = timedelta(hours=24)
+
+# Truncation for anything quoted back from the API into a log line.
+_MAX_QUOTED = 200
 
 
 class TTNStorageError(RuntimeError):
     """The storage API could not be read."""
+
+
+class _UnreadableRecord(Exception):
+    """One streamed record could not be read.
+
+    Raised per record and handled per record: the point of this type is that
+    the other devices in the same window are unaffected.
+    """
+
+
+async def async_validate_credentials(
+    hass: HomeAssistant, hostname: str, app_id: str, api_key: str
+) -> None:
+    """Check a host, application and key without pulling any uplinks.
+
+    Raises ``TTNAuthError`` if the credentials are refused and
+    ``TTNStorageError`` if the application's stored uplinks cannot be read.
+    """
+    client = TTNStorageClient(hass, hostname, app_id, api_key, first_fetch=timedelta(0))
+    await client.fetch_data()
 
 
 class TTNStorageClient:
@@ -73,6 +98,7 @@ class TTNStorageClient:
         hostname: str,
         app_id: str,
         api_key: str,
+        *,
         first_fetch: timedelta = FIRST_FETCH,
     ) -> None:
         """Initialize the client."""
@@ -90,12 +116,6 @@ class TTNStorageClient:
         """Return the instant the last successful fetch was issued at."""
         return self._read_through
 
-    def _window(self, now: datetime) -> timedelta:
-        """Return how far back to ask for, given the current watermark."""
-        if self._read_through is None:
-            return self._first_fetch
-        return min(now - self._read_through + _FETCH_MARGIN, FIRST_FETCH)
-
     async def fetch_data(self) -> DATA_TYPE:
         """Return uplinks stored since the last successful fetch, by device.
 
@@ -108,21 +128,8 @@ class TTNStorageClient:
         issued_at = dt_util.utcnow()
         window = self._window(issued_at)
 
-        if self._read_through is None:
-            _LOGGER.info("First fetch of TTN data: %s", window)
-        else:
-            _LOGGER.debug("Fetching TTN data for the last %s", window)
-
-        options = f"?last={int(window.total_seconds())}s&order=received_at"
-        url = _URL.format(hostname=self._hostname, app_id=self._app_id, options=options)
-        session = async_get_clientsession(self._hass)
-
-        values: DATA_TYPE = {}
-        skipped = 0
-        first_error: str | None = None
-
-        async with session.get(
-            url,
+        async with async_get_clientsession(self._hass).get(
+            self._url(window),
             headers={
                 ACCEPT: "text/event-stream",
                 AUTHORIZATION: f"Bearer {self._api_key}",
@@ -130,36 +137,118 @@ class TTNStorageClient:
             allow_redirects=False,
             timeout=_TIMEOUT,
         ) as response:
-            if response.status in (401, 403):
-                raise TTNAuthError
-            if response.status < 200 or response.status >= 300:
-                raise TTNStorageError(
-                    f"HTTP {response.status} from the storage API"
-                    f"{await self._error_detail(response)}"
-                )
+            await self._raise_for_status(response)
+            values = await self._consume(response)
 
-            async for raw_line in response.content:
-                if (record := self._parse_line(raw_line)) is None:
-                    continue
-                device_id, parsed = record
-                if parsed is None:
-                    skipped += 1
-                    if first_error is None:
-                        first_error = device_id
-                    continue
+        # Only here, with the whole response read, is this window accounted
+        # for. Anything raised above leaves the watermark where it was.
+        self._read_through = issued_at
+        return values
+
+    def _window(self, now: datetime) -> timedelta:
+        """Return how far back to ask for, given the current watermark."""
+        if self._read_through is None:
+            _LOGGER.info("First fetch of TTN data: %s", self._first_fetch)
+            return self._first_fetch
+
+        window = min(now - self._read_through + _FETCH_MARGIN, MAX_WINDOW)
+        _LOGGER.debug("Fetching TTN data for the last %s", window)
+        return window
+
+    def _url(self, window: timedelta) -> str:
+        """Return the storage API URL for one window."""
+        options = f"?last={int(window.total_seconds())}s&order=received_at"
+        return _URL.format(
+            hostname=self._hostname, app_id=self._app_id, options=options
+        )
+
+    @classmethod
+    async def _raise_for_status(cls, response: ClientResponse) -> None:
+        """Reject a response that cannot be read, naming which kind it is."""
+        if response.status in (401, 403):
+            raise TTNAuthError
+        if not 200 <= response.status < 300:
+            raise TTNStorageError(
+                f"HTTP {response.status} from the storage API"
+                f"{await cls._error_detail(response)}"
+            )
+
+    @classmethod
+    async def _consume(cls, response: ClientResponse) -> DATA_TYPE:
+        """Fold a streamed response into the newest value per device field.
+
+        Records stream oldest-first, so a later record's value for a field
+        replaces an earlier one while a field only an earlier record carried
+        survives.
+
+        A record with nothing decoded — what every device without a payload
+        formatter sends — contributes no fields and no device entry. It must
+        not register the device either: the platforms treat a device present
+        here as one worth adding entities for, and the diagnostics they would
+        add can never hold a value, since each is read off a parsed value's
+        uplink and there are none.
+        """
+        values: DATA_TYPE = {}
+        skipped: list[str] = []
+
+        async for raw_line in response.content:
+            if not (line := raw_line.strip()):
+                continue
+            try:
+                device_id, parsed = cls._parse_record(line)
+            except _UnreadableRecord as err:
+                skipped.append(str(err))
+                continue
+            if parsed:
                 values.setdefault(device_id, {}).update(parsed)
 
         if skipped:
             _LOGGER.warning(
                 "Skipped %d unreadable record(s) in this TTN window (first: "
                 "%s); the readable records in the same window were kept",
-                skipped,
-                first_error,
+                len(skipped),
+                skipped[0],
+            )
+        return values
+
+    @staticmethod
+    def _parse_record(line: bytes) -> tuple[str, dict[str, TTNBaseValue]]:
+        """Parse one streamed record into its device id and values.
+
+        Raises ``_UnreadableRecord``, carrying a description for the log, for
+        anything that cannot be read.
+        """
+        try:
+            payload = json.loads(line)
+        except (UnicodeDecodeError, ValueError) as err:
+            raise _UnreadableRecord(f"a record that is not valid JSON: {err}") from err
+
+        if not isinstance(payload, dict) or "result" not in payload:
+            # TTN reports mid-stream problems as a record without a result.
+            raise _UnreadableRecord(
+                f"a record without a result: {payload!r:.{_MAX_QUOTED}}"
             )
 
-        # Only now, with the whole response read, is this window accounted for.
-        self._read_through = issued_at
-        return values
+        result = payload["result"]
+        try:
+            device_id = str(result["end_device_ids"]["device_id"])
+        except (KeyError, IndexError, TypeError) as err:
+            raise _UnreadableRecord(f"a record with no device_id: {err!r}") from err
+
+        try:
+            return device_id, ttn_parse(result)
+        except Exception as err:
+            # Deliberately broad. This is the boundary around a third-party
+            # parser being fed arbitrary decoder output, and the whole point
+            # of the boundary is that nothing crossing it can cost the other
+            # devices in this window. A decoder returning a list where
+            # ttn_client expects an object raises AttributeError, an absent
+            # uplink_message raises KeyError, a Sensecap payload missing
+            # "err" raises KeyError, non-iterable "messages" raises
+            # TypeError; enumerating that set means the next one not on it
+            # reintroduces the bug. BaseException is still allowed through,
+            # so cancellation and interrupts behave normally.
+            raise _UnreadableRecord(f"device {device_id}: {err!r}") from err
 
     @staticmethod
     async def _error_detail(response: ClientResponse) -> str:
@@ -174,55 +263,10 @@ class TTNStorageClient:
             return ""
 
         try:
-            message = json.loads(body).get("message")
-        except (AttributeError, ValueError):
-            message = None
+            payload = json.loads(body)
+        except ValueError:
+            payload = None
 
+        message = payload.get("message") if isinstance(payload, dict) else None
         detail = message if isinstance(message, str) else body.strip()
-        return f": {detail[:200]}" if detail else ""
-
-    @staticmethod
-    def _parse_line(
-        raw_line: bytes,
-    ) -> tuple[str, dict[str, TTNBaseValue] | None] | None:
-        """Parse one streamed record.
-
-        Returns ``None`` for a line that carries no record, and
-        ``(description, None)`` for one that cannot be read — which is
-        counted and skipped so the rest of the window still lands.
-        """
-        line = raw_line.strip()
-        if not line:
-            return None
-
-        try:
-            payload = json.loads(line)
-        except (UnicodeDecodeError, ValueError):
-            return ("a record that is not valid JSON", None)
-
-        if not isinstance(payload, dict) or "result" not in payload:
-            # TTN reports mid-stream problems as a record without a result.
-            return (f"a record without a result: {payload!r:.200}", None)
-
-        result = payload["result"]
-        try:
-            device_id = str(result["end_device_ids"]["device_id"])
-        except (KeyError, IndexError, TypeError):
-            return ("a record with no device_id", None)
-
-        try:
-            parsed = ttn_parse(result)
-        except Exception as err:  # noqa: BLE001 - see below
-            # Deliberately broad. This is the boundary around a third-party
-            # parser being fed arbitrary decoder output, and the whole point
-            # of the boundary is that nothing crossing it can cost the other
-            # devices in this window. A decoder returning a list where
-            # ttn_client expects an object raises AttributeError, an absent
-            # uplink_message raises KeyError, a Sensecap payload missing
-            # "err" raises KeyError, non-iterable "messages" raises
-            # TypeError; enumerating that set means the next one not on it
-            # reintroduces the bug. BaseException is still allowed through,
-            # so cancellation and interrupts behave normally.
-            return (f"device {device_id}: {err!r}", None)
-
-        return (device_id, parsed or {})
+        return f": {detail[:_MAX_QUOTED]}" if detail else ""
