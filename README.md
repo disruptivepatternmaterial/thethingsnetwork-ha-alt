@@ -24,6 +24,24 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.7.4
+
+- **A decoded field is no longer swallowed by a GPS object of the same name.**
+  A `gps` object is expanded into one sensor per axis, and those were named
+  `gps_latitude`, `gps_longitude` and `gps_altitude` — which are also
+  perfectly ordinary field names, and ones this integration maps by default.
+  A decoder sending both a GPS object and a flat `gps_latitude` reading had
+  the flat one silently discarded: the axis reserved the name first, so
+  discovery skipped the real field. No entity, no warning, and nothing in the
+  log to say a reading was being dropped every uplink. The axes now live in
+  the reserved synthetic namespace (`_gps_<parent>_<component>`) that decoded
+  fields cannot reach, because discovery ignores any field starting with `_`.
+
+  Existing axis entities are renamed in the entity registry during setup, so
+  their entity id, customisations and recorder history carry over. An
+  exclusion written against the old name still works. A device that sends a
+  flat `gps_latitude` and no GPS object is left alone.
+
 ## Changes in 0.7.3
 
 - **Sensors no longer silently stop updating.** Four separate defects in the
