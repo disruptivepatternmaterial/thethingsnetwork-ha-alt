@@ -24,6 +24,36 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.7.3 (unreleased)
+
+- **Sensors no longer silently stop updating.** Four separate defects in the
+  coordinator update path each caused a field to stop tracking new uplinks
+  while TTN kept delivering them:
+  - An uplink timestamp without a UTC offset produced a naive `datetime`,
+    and comparing it against an aware one raised `TypeError`. Home Assistant
+    catches listener exceptions and only logs them, so the affected entity
+    quietly stopped updating for the rest of the run. Receipt times are now
+    normalised to aware UTC before comparison.
+  - A missing or malformed `received_at` raised `KeyError` / `ValueError`
+    from the same unguarded comparison, with the same permanent effect. Both
+    are now handled, and an update that cannot be dated is applied rather
+    than discarded — an unreadable timestamp never freezes an entity.
+  - A field that reports `0`/`1` on some uplinks and `false`/`true` on others
+    alternates between `TTNSensorValue` and `TTNBinarySensorValue`, and the
+    exact-type guard threw those readings away. Both classes carry a usable
+    scalar, so swapping between them is now accepted. Genuinely incompatible
+    changes (a scalar becoming a GPS fix) are still refused, and the warning
+    is logged once per transition instead of once per uplink.
+  - TTN sends nanosecond timestamps that `fromisoformat` truncates to
+    microseconds, so two distinct uplinks could compare equal and the second
+    was dropped. Ordering now falls back to the full-precision stamp, which
+    still makes a re-delivered uplink idempotent across overlapping fetch
+    windows.
+- **The repository has a test suite.** `pytest` with
+  `pytest-homeassistant-custom-component`, run in CI on every push and pull
+  request. Each fix above has a regression test that fails against the
+  previous code.
+
 ## Changes in 0.7.2
 
 - **Device names apply to existing HA devices.** `device_names.json` is the
