@@ -24,6 +24,24 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.1
+
+- **Four shipped field mappings claimed a device class Home Assistant does
+  not have.** `pga_m_s2`, `accel_x_g`, `accel_y_g` and `accel_z_g` were
+  mapped to `device_class: acceleration`, which is not a Home Assistant
+  sensor device class. Home Assistant discarded it and the integration
+  logged a warning for each field on every startup. The readings themselves
+  were never affected. The device class is gone; the unit (`m/s²`, `g`) and
+  `state_class: measurement` stay, which is what those sensors were
+  actually getting.
+
+- **The shipped metadata is now validated by the test suite.** Every device
+  class, state class and entity category in `field_mappings.json`, and every
+  one produced by the field-name suffix heuristics, is checked against Home
+  Assistant's own enums — along with a check that no field is mapped twice.
+  A value Home Assistant does not recognise was previously only discoverable
+  by reading the log of a running instance.
+
 ## Changes in 0.8.0
 
 - **A failed poll no longer skips past the uplinks it never read.** The
