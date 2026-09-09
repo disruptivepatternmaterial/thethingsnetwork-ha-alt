@@ -1,0 +1,6 @@
+# Test-only dependencies. pytest-homeassistant-custom-component pins the
+# Home Assistant version it tests against, so bumping it bumps HA too.
+pytest-homeassistant-custom-component==0.13.364
+
+# Must track the pinned runtime dependency in custom_components/thethingsnetwork_alt/manifest.json.
+ttn_client==1.3.0
