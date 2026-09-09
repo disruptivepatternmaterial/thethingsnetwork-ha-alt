@@ -5,11 +5,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ttn_client import TTNDeviceTrackerValue
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .const import CONF_APP_ID, DOMAIN
+from .const import (
+    CONF_APP_ID,
+    DOMAIN,
+    GPS_COMPONENTS,
+    SYNTHETIC_PREFIX,
+    gps_component_field_id,
+    legacy_gps_component_field_id,
+)
 from .coordinator import TTNConfigEntry
 from .field_defaults import get_field_mapping, get_field_platform, merge_field_attr
 from .metadata import get_device_name
@@ -92,6 +101,87 @@ def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
 
         coordinator.seed_field_platform(
             ttn_device_id, field_id, entity_entry.domain
+        )
+
+
+def migrate_gps_component_unique_ids(
+    hass: HomeAssistant, entry: TTNConfigEntry
+) -> None:
+    """Move GPS axis sensors into the reserved synthetic namespace.
+
+    Before 0.7.4 an axis of a decoded GPS object was registered as
+    ``f"{device}_{parent}_{component}"`` — indistinguishable from an ordinary
+    decoded field of the same name. Renaming the unique_id here rather than
+    letting the platform register the new one keeps the entity_id, the user's
+    customisations and the recorder history attached to the axis.
+
+    Only devices that are *currently* decoding a GPS object are considered, so
+    an ordinary ``gps_latitude`` sensor on a device with no GPS object is left
+    alone. On a device that sends both, the registered entity can only ever
+    have been the axis — that is the bug being fixed, the axis reserved the
+    name and the flat field was dropped — so it migrates and the flat field
+    gets its own entity on the next poll.
+    """
+    coordinator = entry.runtime_data
+    data = coordinator.data or {}
+
+    gps_parents: dict[str, set[str]] = {}
+    for device_id, fields in data.items():
+        for field_id, value in fields.items():
+            if isinstance(value, TTNDeviceTrackerValue):
+                gps_parents.setdefault(str(device_id), set()).add(str(field_id))
+
+    if not gps_parents:
+        return
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    app_id = entry.data[CONF_APP_ID]
+
+    for entity_entry in list(
+        er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    ):
+        if entity_entry.domain != "sensor":
+            continue
+
+        ttn_device_id = _ttn_device_id_for_entity(
+            entity_entry, device_registry, app_id
+        )
+        if not ttn_device_id or not (parents := gps_parents.get(ttn_device_id)):
+            continue
+
+        field_id = _field_id_from_unique_id(entity_entry.unique_id, ttn_device_id)
+        if not field_id or field_id.startswith(SYNTHETIC_PREFIX):
+            continue
+
+        match = next(
+            (
+                (parent, component)
+                for parent in parents
+                for component in GPS_COMPONENTS
+                if field_id == legacy_gps_component_field_id(parent, component)
+            ),
+            None,
+        )
+        if match is None:
+            continue
+
+        new_unique_id = f"{ttn_device_id}_{gps_component_field_id(*match)}"
+        if entity_registry.async_get_entity_id("sensor", DOMAIN, new_unique_id):
+            _LOGGER.warning(
+                "Not migrating %s to unique_id %s: already registered",
+                entity_entry.entity_id,
+                new_unique_id,
+            )
+            continue
+
+        entity_registry.async_update_entity(
+            entity_entry.entity_id, new_unique_id=new_unique_id
+        )
+        _LOGGER.info(
+            "Migrated GPS axis %s to unique_id %s",
+            entity_entry.entity_id,
+            new_unique_id,
         )
 
 
