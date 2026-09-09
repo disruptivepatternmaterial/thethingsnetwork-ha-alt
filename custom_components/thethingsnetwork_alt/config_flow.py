@@ -1,7 +1,6 @@
 """The Things Network HA-Alt config flow."""
 
 from collections.abc import Mapping
-from datetime import timedelta
 import logging
 from typing import Any
 
@@ -18,7 +17,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import CONF_APP_ID, DOMAIN, TTN_API_HOST
-from .storage import TTNStorageClient, TTNStorageError
+from .storage import TTNStorageError, async_validate_credentials
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,17 +39,13 @@ class TTNFlowHandler(ConfigFlow, domain=DOMAIN):
             host = str(user_input[CONF_HOST]).strip()
             host = host.removeprefix("https://").removeprefix("http://").rstrip("/")
             user_input = {**user_input, CONF_HOST: host or TTN_API_HOST}
-            # A zero-length window checks the host, application and key
-            # without pulling a day of uplinks just to validate the form.
-            client = TTNStorageClient(
-                self.hass,
-                user_input[CONF_HOST],
-                user_input[CONF_APP_ID],
-                user_input[CONF_API_KEY],
-                first_fetch=timedelta(0),
-            )
             try:
-                await client.fetch_data()
+                await async_validate_credentials(
+                    self.hass,
+                    user_input[CONF_HOST],
+                    user_input[CONF_APP_ID],
+                    user_input[CONF_API_KEY],
+                )
             except TTNAuthError:
                 _LOGGER.exception("Error authenticating with The Things Network")
                 errors["base"] = "invalid_auth"
