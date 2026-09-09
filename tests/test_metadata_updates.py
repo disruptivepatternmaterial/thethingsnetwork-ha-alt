@@ -282,3 +282,70 @@ async def test_device_names_are_re_read_on_setup(ttn: TTNHarness) -> None:
     await ttn.reload(make_uplink("2026-09-01T00:05:00Z", {"temperature": 21.5}))
 
     assert metadata.get_device_name("dev-1") != "Stale Cached Name"
+
+
+# --- Upgrading from the pre-0.7.4 GPS axis naming ---------------------------
+
+GPS_UPLINK = make_uplink(
+    "2026-09-01T00:00:00Z",
+    {"gps": {"latitude": 47.6, "longitude": -122.3, "altitude": 30.0}},
+)
+
+
+async def test_existing_gps_axis_keeps_its_entity_across_the_rename(
+    ttn: TTNHarness,
+) -> None:
+    """Renaming the unique_id must not orphan the entity behind it.
+
+    Installs upgrading from <=0.7.3 already have ``<device>_gps_latitude``
+    rows carrying the user's customisations and their recorder history. The
+    migration renames those in place; without it the platform would register
+    the new unique_id as a second entity and leave the original stranded.
+    """
+    original = ttn.preregister(
+        "sensor", "dev-1_gps_latitude", suggested_object_id="dev_1_latitude"
+    )
+
+    await ttn.start(GPS_UPLINK)
+
+    assert ttn.entity_id_for("dev-1__gps_gps_latitude") == original
+    assert ttn.entity_id_for("dev-1_gps_latitude") is None
+    assert ttn.state(original) == "47.6"
+
+
+async def test_migration_does_not_touch_a_plain_field_named_like_an_axis(
+    ttn: TTNHarness,
+) -> None:
+    """A device with no GPS object keeps its ordinary gps_latitude sensor."""
+    original = ttn.preregister("sensor", "dev-1_gps_latitude")
+
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"gps_latitude": 11.11}))
+
+    assert ttn.entity_id_for("dev-1_gps_latitude") == original
+    assert ttn.entity_id_for("dev-1__gps_gps_latitude") is None
+
+
+async def test_migration_leaves_both_entities_when_the_device_sends_both(
+    ttn: TTNHarness,
+) -> None:
+    """The axis takes the migrated row; the flat field gets a fresh one."""
+    original = ttn.preregister(
+        "sensor", "dev-1_gps_latitude", suggested_object_id="dev_1_latitude"
+    )
+
+    await ttn.start(
+        make_uplink(
+            "2026-09-01T00:00:00Z",
+            {
+                "gps": {"latitude": 47.6, "longitude": -122.3},
+                "gps_latitude": 11.11,
+            },
+        )
+    )
+
+    assert ttn.entity_id_for("dev-1__gps_gps_latitude") == original
+    assert ttn.state(original) == "47.6"
+
+    flat = ttn.entity_id_for("dev-1_gps_latitude")
+    assert flat is not None and flat != original
+    assert ttn.state(flat) == "11.11"

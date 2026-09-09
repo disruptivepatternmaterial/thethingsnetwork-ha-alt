@@ -486,3 +486,86 @@ async def test_failed_poll_does_not_blank_the_diagnostics(ttn: TTNHarness) -> No
     assert ttn.state("sensor.dev_1_rssi") == "-70"
     assert ttn.state("sensor.dev_1_last_seen") == "2026-09-01T00:00:00+00:00"
     assert ttn.attribute("device_tracker.dev_1_location", "latitude") == 47.6
+
+
+# --- A GPS object must not consume a decoded field's name -------------------
+
+
+async def test_flat_field_is_not_swallowed_by_a_gps_component(
+    ttn: TTNHarness,
+) -> None:
+    """A decoder can send a GPS object *and* a flat field of the same name.
+
+    The axis sensors were named ``f"{parent}_{component}"``, which is exactly
+    what a decoded ``gps_latitude`` field is called. The axis reserved the
+    name first, so discovery skipped the real field: no entity, no warning,
+    and a reading that never reached Home Assistant at all.
+    """
+    await ttn.start(
+        make_uplink(
+            "2026-09-01T00:00:00Z",
+            {
+                "gps": {"latitude": 47.6, "longitude": -122.3},
+                "gps_latitude": 11.11,
+            },
+            rx_metadata=RX,
+        )
+    )
+
+    assert "47.6" in ttn.readings()
+    assert "11.11" in ttn.readings()
+
+
+async def test_swallowed_flat_field_keeps_tracking_later_uplinks(
+    ttn: TTNHarness,
+) -> None:
+    """Recovering the entity is only useful if it then follows the payload."""
+    await ttn.start(
+        make_uplink(
+            "2026-09-01T00:00:00Z",
+            {
+                "gps": {"latitude": 47.6, "longitude": -122.3},
+                "gps_latitude": 11.11,
+            },
+            rx_metadata=RX,
+        )
+    )
+
+    await ttn.poll(
+        make_uplink(
+            "2026-09-01T00:01:00Z",
+            {
+                "gps": {"latitude": 47.7, "longitude": -122.4},
+                "gps_latitude": 22.22,
+            },
+            rx_metadata=RX,
+        )
+    )
+
+    assert "47.7" in ttn.readings()
+    assert "22.22" in ttn.readings()
+
+
+async def test_gps_axis_sensors_use_the_reserved_namespace(
+    ttn: TTNHarness,
+) -> None:
+    """Axis unique_ids must sit where no decoded field can ever reach.
+
+    Discovery skips any field_id starting with ``_``, so a synthetic id built
+    with that prefix cannot be produced by a decoder.
+    """
+    await ttn.start(
+        make_uplink(
+            "2026-09-01T00:00:00Z",
+            {"gps": {"latitude": 47.6, "longitude": -122.3, "altitude": 30.0}},
+            rx_metadata=RX,
+        )
+    )
+
+    axis_ids = [uid for uid in ttn.unique_ids() if "gps" in uid]
+
+    assert axis_ids == [
+        f"{DEVICE_ID}__gps_gps_altitude",
+        f"{DEVICE_ID}__gps_gps_latitude",
+        f"{DEVICE_ID}__gps_gps_longitude",
+    ]
