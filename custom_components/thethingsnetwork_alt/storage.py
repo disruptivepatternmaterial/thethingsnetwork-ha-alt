@@ -17,14 +17,21 @@ Two upstream behaviours are the reason:
 
 Both produced the same user-visible symptom: a field with new data in TTN
 that never reaches Home Assistant.
+
+A third lives in the API itself: one request returns at most
+``PAGE_LIMIT`` records, oldest first, and says nothing when it stops early.
+A window holding more than that was read only up to its first thousand
+records, the watermark then moved to "now", and everything after the cut was
+never read. On a restart that made every field show the value it had hours
+earlier, as if it were current.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import json
 import logging
-from typing import Final
+from typing import Final, NamedTuple
 
 from aiohttp import ClientError, ClientResponse, ClientTimeout
 from aiohttp.hdrs import ACCEPT, AUTHORIZATION
@@ -34,6 +41,8 @@ from ttn_client.parsers import ttn_parse
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
+
+from .timestamp import parse_ttn_timestamp
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +70,20 @@ FIRST_FETCH: Final = timedelta(hours=24)
 # off for a week would ask TTN for a week in one request.
 MAX_WINDOW: Final = timedelta(hours=24)
 
+# The storage API's own ceiling on records per request: it answers a larger
+# ``limit`` with HTTP 400, and without one it silently stops at this many.
+PAGE_LIMIT: Final = 1000
+
+# Each follow-up page starts this far before the last record already read.
+# ``after`` is exclusive, so without overlap a record sharing the boundary
+# stamp at a precision we truncate away could be skipped. Re-reading is free
+# for the same reason _FETCH_MARGIN is.
+_PAGE_OVERLAP: Final = timedelta(seconds=1)
+
+# A backstop against a response that never shrinks below a full page. At
+# PAGE_LIMIT per page this is far beyond one MAX_WINDOW of any real app.
+MAX_PAGES: Final = 100
+
 # Truncation for anything quoted back from the API into a log line.
 _MAX_QUOTED = 200
 
@@ -69,12 +92,24 @@ class TTNStorageError(RuntimeError):
     """The storage API could not be read."""
 
 
+class _Page(NamedTuple):
+    """What one response contained, beyond the values folded out of it."""
+
+    records: int
+    last_received_at: datetime | None
+
+
 class _UnreadableRecord(Exception):
     """One streamed record could not be read.
 
     Raised per record and handled per record: the point of this type is that
     the other devices in the same window are unaffected.
     """
+
+    def __init__(self, message: str, received_at: datetime | None = None) -> None:
+        """Keep the receipt time, which paging needs even from a bad record."""
+        super().__init__(message)
+        self.received_at = received_at
 
 
 async def async_validate_credentials(
@@ -128,8 +163,28 @@ class TTNStorageClient:
         issued_at = dt_util.utcnow()
         window = self._window(issued_at)
 
+        values: DATA_TYPE = {}
+        after: datetime | None = None
+        for _ in range(MAX_PAGES):
+            page = await self._fetch_page(self._url(window, after), values)
+            if page.records < PAGE_LIMIT:
+                break
+            after = self._next_page_after(page, after)
+        else:
+            raise TTNStorageError(
+                f"the storage API was still returning full pages after "
+                f"{MAX_PAGES} requests for one window"
+            )
+
+        # Only here, with every page read, is this window accounted for.
+        # Anything raised above leaves the watermark where it was.
+        self._read_through = issued_at
+        return values
+
+    async def _fetch_page(self, url: str, values: DATA_TYPE) -> _Page:
+        """Fold one request's records into ``values``."""
         async with async_get_clientsession(self._hass).get(
-            self._url(window),
+            url,
             headers={
                 ACCEPT: "text/event-stream",
                 AUTHORIZATION: f"Bearer {self._api_key}",
@@ -138,12 +193,27 @@ class TTNStorageClient:
             timeout=_TIMEOUT,
         ) as response:
             await self._raise_for_status(response)
-            values = await self._consume(response)
+            return await self._consume(response, values)
 
-        # Only here, with the whole response read, is this window accounted
-        # for. Anything raised above leaves the watermark where it was.
-        self._read_through = issued_at
-        return values
+    @staticmethod
+    def _next_page_after(page: _Page, previous: datetime | None) -> datetime:
+        """Return where the page after a full one must start.
+
+        Raises ``TTNStorageError`` when paging could not make progress, since
+        returning what was read so far would silently drop the rest.
+        """
+        if page.last_received_at is None:
+            raise TTNStorageError(
+                "a full page from the storage API had no readable received_at "
+                "to continue from"
+            )
+        after = page.last_received_at - _PAGE_OVERLAP
+        if previous is not None and after <= previous:
+            raise TTNStorageError(
+                f"more than {PAGE_LIMIT} records share one second at "
+                f"{page.last_received_at.isoformat()}; cannot page past them"
+            )
+        return after
 
     def _window(self, now: datetime) -> timedelta:
         """Return how far back to ask for, given the current watermark."""
@@ -155,9 +225,14 @@ class TTNStorageClient:
         _LOGGER.debug("Fetching TTN data for the last %s", window)
         return window
 
-    def _url(self, window: timedelta) -> str:
-        """Return the storage API URL for one window."""
-        options = f"?last={int(window.total_seconds())}s&order=received_at"
+    def _url(self, window: timedelta, after: datetime | None = None) -> str:
+        """Return the storage API URL for one page of a window."""
+        if after is None:
+            start = f"last={int(window.total_seconds())}s"
+        else:
+            # A literal "Z", because "+00:00" arrives as " 00:00" in a query.
+            start = f"after={after.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')}"
+        options = f"?{start}&order=received_at&limit={PAGE_LIMIT}"
         return _URL.format(
             hostname=self._hostname, app_id=self._app_id, options=options
         )
@@ -174,8 +249,8 @@ class TTNStorageClient:
             )
 
     @classmethod
-    async def _consume(cls, response: ClientResponse) -> DATA_TYPE:
-        """Fold a streamed response into the newest value per device field.
+    async def _consume(cls, response: ClientResponse, values: DATA_TYPE) -> _Page:
+        """Fold a streamed response into ``values``, newest value per field.
 
         Records stream oldest-first, so a later record's value for a field
         replaces an earlier one while a field only an earlier record carried
@@ -188,17 +263,22 @@ class TTNStorageClient:
         add can never hold a value, since each is read off a parsed value's
         uplink and there are none.
         """
-        values: DATA_TYPE = {}
+        records = 0
+        last_received_at: datetime | None = None
         skipped: list[str] = []
 
         async for raw_line in response.content:
             if not (line := raw_line.strip()):
                 continue
+            # Unreadable records still count: the API's page limit does.
+            records += 1
             try:
-                device_id, parsed = cls._parse_record(line)
+                device_id, received_at, parsed = cls._parse_record(line)
             except _UnreadableRecord as err:
                 skipped.append(str(err))
+                last_received_at = err.received_at or last_received_at
                 continue
+            last_received_at = received_at or last_received_at
             if parsed:
                 values.setdefault(device_id, {}).update(parsed)
 
@@ -209,14 +289,17 @@ class TTNStorageClient:
                 len(skipped),
                 skipped[0],
             )
-        return values
+        return _Page(records, last_received_at)
 
     @staticmethod
-    def _parse_record(line: bytes) -> tuple[str, dict[str, TTNBaseValue]]:
-        """Parse one streamed record into its device id and values.
+    def _parse_record(
+        line: bytes,
+    ) -> tuple[str, datetime | None, dict[str, TTNBaseValue]]:
+        """Parse one streamed record into its device id, receipt time and values.
 
-        Raises ``_UnreadableRecord``, carrying a description for the log, for
-        anything that cannot be read.
+        Raises ``_UnreadableRecord``, carrying a description for the log and
+        the receipt time when the record had one, for anything that cannot be
+        read.
         """
         try:
             payload = json.loads(line)
@@ -230,13 +313,20 @@ class TTNStorageClient:
             )
 
         result = payload["result"]
+        received_at = (
+            parse_ttn_timestamp(result.get("received_at"))
+            if isinstance(result, dict)
+            else None
+        )
         try:
             device_id = str(result["end_device_ids"]["device_id"])
         except (KeyError, IndexError, TypeError) as err:
-            raise _UnreadableRecord(f"a record with no device_id: {err!r}") from err
+            raise _UnreadableRecord(
+                f"a record with no device_id: {err!r}", received_at
+            ) from err
 
         try:
-            return device_id, ttn_parse(result)
+            return device_id, received_at, ttn_parse(result)
         except Exception as err:
             # Deliberately broad. This is the boundary around a third-party
             # parser being fed arbitrary decoder output, and the whole point
@@ -248,7 +338,9 @@ class TTNStorageClient:
             # TypeError; enumerating that set means the next one not on it
             # reintroduces the bug. BaseException is still allowed through,
             # so cancellation and interrupts behave normally.
-            raise _UnreadableRecord(f"device {device_id}: {err!r}") from err
+            raise _UnreadableRecord(
+                f"device {device_id}: {err!r}", received_at
+            ) from err
 
     @staticmethod
     async def _error_detail(response: ClientResponse) -> str:

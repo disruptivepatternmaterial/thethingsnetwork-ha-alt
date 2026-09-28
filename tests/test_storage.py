@@ -9,19 +9,24 @@ what happens to the window a failed request never read.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import json
 import logging
 from typing import Any
 
 import pytest
-from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.test_util.aiohttp import (
+    AiohttpClientMocker,
+    AiohttpClientMockResponse,
+)
 from ttn_client import TTNAuthError
 from ttn_client.parsers import ttn_parse
 
+from custom_components.thethingsnetwork_alt import storage
 from custom_components.thethingsnetwork_alt.storage import (
     FIRST_FETCH,
     MAX_WINDOW,
+    PAGE_LIMIT,
     TTNStorageClient,
     TTNStorageError,
 )
@@ -377,6 +382,165 @@ async def test_a_long_outage_does_not_ask_for_an_unbounded_window(
     await ttn.fetch_data()
 
     assert requested_window(aioclient_mock) == int(MAX_WINDOW.total_seconds())
+
+
+# --- A window larger than one page must be read to its end -----------------
+
+T0 = datetime(2026, 9, 27, 13, 30, tzinfo=UTC)
+FIRST_PAGE = {"last": f"{int(FIRST_FETCH.total_seconds())}s"}
+
+
+def stamp(offset_s: float) -> str:
+    """Return a TTN-style receipt stamp ``offset_s`` after T0."""
+    return (T0 + timedelta(seconds=offset_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def full_page(temperature: float, *, start_s: int = 0, same_stamp: bool = False) -> str:
+    """Return exactly PAGE_LIMIT records, one second apart unless told not to."""
+    return stream(
+        *(
+            make_uplink(
+                stamp(start_s if same_stamp else start_s + i),
+                {"temperature": temperature},
+            )
+            for i in range(PAGE_LIMIT)
+        )
+    )
+
+
+async def test_every_request_asks_for_the_api_page_limit(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Paging is keyed on the page size, so it must be the one we asked for."""
+    aioclient_mock.get(URL, text="")
+
+    await client(hass).fetch_data()
+
+    _method, url, _data, _headers = aioclient_mock.mock_calls[-1]
+    assert url.query["limit"] == str(PAGE_LIMIT)
+
+
+async def test_a_full_page_is_followed_by_the_rest_of_the_window(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """This is the defect: a restart showed values from hours earlier.
+
+    The API returns at most PAGE_LIMIT records oldest-first and does not say
+    it stopped. A first fetch reaching back a day read only its oldest
+    thousand, so every field came up with a reading from that cut-off, and
+    the watermark moved to "now" past everything after it.
+    """
+    last_on_first_page = T0 + timedelta(seconds=PAGE_LIMIT - 1)
+    after = (last_on_first_page - timedelta(seconds=1)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    aioclient_mock.get(URL, params=FIRST_PAGE, text=full_page(20.5))
+    aioclient_mock.get(
+        URL,
+        params={"after": after},
+        text=stream(
+            make_uplink(stamp(PAGE_LIMIT - 1), {"temperature": 20.5}),
+            make_uplink(stamp(PAGE_LIMIT + 600), {"temperature": 3.7}),
+        ),
+    )
+
+    data = await client(hass).fetch_data()
+
+    assert aioclient_mock.call_count == 2
+    assert data[DEVICE_ID]["temperature"].value == 3.7
+
+
+async def test_a_short_page_ends_the_window(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """One record short of a page is the whole window; asking again is waste."""
+    aioclient_mock.get(
+        URL,
+        text=stream(
+            *(
+                make_uplink(stamp(i), {"temperature": 20.5})
+                for i in range(PAGE_LIMIT - 1)
+            )
+        ),
+    )
+
+    await client(hass).fetch_data()
+
+    assert aioclient_mock.call_count == 1
+
+
+async def test_unreadable_records_count_toward_a_full_page(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The API's limit counts records, not the ones this client could parse."""
+    hostile = make_uplink(stamp(PAGE_LIMIT - 1), {"temperature": 0.0})
+    hostile["uplink_message"]["decoded_payload"] = []
+    page = [make_uplink(stamp(i), {"temperature": 20.5}) for i in range(PAGE_LIMIT - 1)]
+    after = (T0 + timedelta(seconds=PAGE_LIMIT - 2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    aioclient_mock.get(URL, params=FIRST_PAGE, text=stream(*page, hostile))
+    aioclient_mock.get(
+        URL,
+        params={"after": after},
+        text=stream(make_uplink(stamp(PAGE_LIMIT + 5), {"temperature": 3.7})),
+    )
+
+    data = await client(hass).fetch_data()
+
+    assert aioclient_mock.call_count == 2
+    assert data[DEVICE_ID]["temperature"].value == 3.7
+
+
+async def test_paging_that_cannot_advance_fails_the_fetch(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A page that ends where it started would loop forever or drop data.
+
+    Either outcome is worse than a failed poll, which leaves the watermark
+    alone so the window is re-read.
+    """
+    aioclient_mock.get(URL, text=full_page(20.5, same_stamp=True))
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="cannot page past"):
+        await ttn.fetch_data()
+
+    assert ttn.read_through is None
+
+
+async def test_a_full_page_without_receipt_times_fails_the_fetch(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """With nothing to continue from, the rest of the window is unreachable."""
+    aioclient_mock.get(URL, text=raw_stream(*["{not json"] * PAGE_LIMIT))
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="no readable received_at"):
+        await ttn.fetch_data()
+
+    assert ttn.read_through is None
+
+
+async def test_a_window_that_never_ends_fails_the_fetch(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, monkeypatch: Any
+) -> None:
+    """A backstop, not an expected path: the watermark must not move."""
+    monkeypatch.setattr(storage, "MAX_PAGES", 3)
+
+    async def advancing_page(method: str, url: Any, data: Any) -> Any:
+        start = len(aioclient_mock.mock_calls) * PAGE_LIMIT
+        return AiohttpClientMockResponse(
+            method, url, text=full_page(20.5, start_s=start)
+        )
+
+    aioclient_mock.get(URL, side_effect=advancing_page)
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="still returning full pages"):
+        await ttn.fetch_data()
+
+    assert aioclient_mock.call_count == 3
+    assert ttn.read_through is None
 
 
 # --- Response status handling ----------------------------------------------
