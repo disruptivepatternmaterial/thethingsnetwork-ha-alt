@@ -24,6 +24,24 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.4
+
+- **0.8.3 could leave every entity unavailable after a restart; 0.8.4 fixes
+  that.** The storage endpoint is rate limited per application, 10 requests a
+  minute on The Things Network. 0.8.3 read a busy application's first fetch
+  as about ten pages back to back, ran out of allowance part-way, and failed
+  the poll on HTTP 429. Every retry started the same window again, so on an
+  application with more than roughly 9,000 uplinks a day the entities never
+  came up.
+
+  Paging now reads the rate-limit headers The Things Stack sends with every
+  response. When two or fewer requests are left — a margin for anything else
+  reading the same application — it waits for the limiter to reset before the
+  next page. A page answered with HTTP 429 is retried after the wait the
+  response asks for, up to three times. A wait longer than a minute is not
+  believed and fails the poll instead of stalling it. On a busy application
+  the first fetch after a restart therefore takes about a minute.
+
 ## Changes in 0.8.3
 
 - **A restart no longer brings every sensor up with a value from hours
