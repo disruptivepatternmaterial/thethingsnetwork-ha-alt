@@ -6,11 +6,7 @@ import logging
 
 from ttn_client import TTNBinarySensorValue, TTNSensorAttribute, TTNSensorValue
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-)
-from homeassistant.const import EntityCategory
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -24,7 +20,7 @@ from .field_defaults import (
     merge_field_attr,
     value_is_on,
 )
-from .helpers import EnumT, extract_sensor_attr, parse_enum
+from .helpers import apply_field_metadata, extract_sensor_attr
 from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -149,32 +145,9 @@ class TtnDataBinarySensor(TTNEntity, BinarySensorEntity):
         cannot leave a stale value behind from the previous set.
         """
         self._attr = attr
-
-        self._attr_device_class = self._parse_or_warn(
-            BinarySensorDeviceClass, attr.get("device_class"), "device_class"
+        apply_field_metadata(
+            self, attr, field_id=self.field_id, default_name=self.field_id
         )
-        self._attr_entity_category = self._parse_or_warn(
-            EntityCategory, attr.get("entity_category"), "entity_category"
-        )
-        self._attr_name = attr.get("friendly_name") or self.field_id
-
-    def _parse_or_warn(
-        self, enum_cls: type[EnumT], raw: object | None, key: str
-    ) -> EnumT | None:
-        """Parse one metadata value, reporting anything Home Assistant refuses."""
-        if not raw:
-            return None
-
-        if (parsed := parse_enum(enum_cls, raw)) is not None:
-            return parsed
-
-        _LOGGER.warning(
-            "Field %s has unsupported binary_sensor %s=%r",
-            self.field_id,
-            key,
-            raw,
-        )
-        return None
 
     @property
     def is_on(self) -> bool | None:

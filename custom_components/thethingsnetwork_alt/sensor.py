@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import suppress
 from datetime import datetime
 import logging
 from typing import Final
@@ -43,7 +42,12 @@ from .field_defaults import (
     default_field_attr,
     merge_field_attr,
 )
-from .helpers import extract_sensor_attr, newest_uplink_carrier, parse_enum
+from .helpers import (
+    apply_field_metadata,
+    extract_sensor_attr,
+    newest_uplink_carrier,
+    parse_enum,
+)
 from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
@@ -359,20 +363,12 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         Assigns all of them, including to None, so re-applying later metadata
         cannot leave a stale value behind from the previous set.
         """
-        attr = self._effective_attr()
-
-        self._attr_native_unit_of_measurement = attr.get("unit")
-        self._attr_device_class = parse_enum(
-            SensorDeviceClass, attr.get("device_class")
+        apply_field_metadata(
+            self,
+            self._effective_attr(),
+            field_id=self.field_id,
+            default_name=self.field_id,
         )
-        self._attr_state_class = parse_enum(SensorStateClass, attr.get("state_class"))
-        self._attr_entity_category = parse_enum(
-            EntityCategory, attr.get("entity_category")
-        )
-        self._attr_suggested_display_precision = self._parse_precision(
-            attr.get("suggested_display_precision")
-        )
-        self._attr_name = attr.get("friendly_name") or self.field_id
 
         self._parse_timestamp = (
             self._attr_device_class == SensorDeviceClass.TIMESTAMP
@@ -380,25 +376,6 @@ class TtnDataSensor(TTNEntity, SensorEntity):
         )
         if self._parse_timestamp:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
-
-    def _parse_precision(self, precision: object) -> int | None:
-        """Return the configured display precision, or None when unusable.
-
-        ``0`` is a legitimate precision — "show this as a whole number" — so
-        it must not be read as "unset" the way a falsy check would.
-        """
-        if precision is None or precision == "":
-            return None
-        try:
-            return int(precision)  # type: ignore[arg-type]
-        except (ValueError, TypeError):
-            _LOGGER.warning(
-                "Invalid suggested_display_precision for %s (unique_id=%s): %r",
-                self.field_id,
-                self.unique_id,
-                precision,
-            )
-            return None
 
     def _effective_attr(self) -> SensorAttrDict | FieldMappingDict:
         """Return the metadata to publish, given what this field actually reports.
@@ -537,20 +514,12 @@ class TtnGpsComponentSensor(TTNEntity, SensorEntity):
         self._component = component
         # Override unique_id so each component is a separate HA entity.
         self._attr_unique_id = f"{self.device_id}_{synthetic_field_id}"
-        self._attr_name = attr.get("friendly_name", component.title())
-
-        if unit := attr.get("unit"):
-            self._attr_native_unit_of_measurement = unit
-        if device_class := parse_enum(SensorDeviceClass, attr.get("device_class")):
-            self._attr_device_class = device_class
-        if state_class := parse_enum(SensorStateClass, attr.get("state_class")):
-            self._attr_state_class = state_class
-        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
-            self._attr_entity_category = entity_category
-        precision = attr.get("suggested_display_precision")
-        if precision is not None and precision != "":
-            with suppress(ValueError, TypeError):
-                self._attr_suggested_display_precision = int(precision)
+        apply_field_metadata(
+            self,
+            attr,
+            field_id=synthetic_field_id,
+            default_name=component.title(),
+        )
 
     @property
     def native_value(self) -> StateType:
@@ -590,18 +559,13 @@ class TtnMetaSensor(TTNCachedEntity, SensorEntity):
         # constantly-transmitting device would ever show a value).
         self._cached_value: StateType | datetime = None
 
-        self._attr_name = attr.get("friendly_name", kind.replace("_meta_", ""))
-
-        if unit := attr.get("unit"):
-            self._attr_native_unit_of_measurement = unit
-        if device_class := parse_enum(SensorDeviceClass, attr.get("device_class")):
-            self._attr_device_class = device_class
-        if state_class := parse_enum(SensorStateClass, attr.get("state_class")):
-            self._attr_state_class = state_class
-        if entity_category := parse_enum(EntityCategory, attr.get("entity_category")):
-            self._attr_entity_category = entity_category
-        else:
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        apply_field_metadata(
+            self,
+            attr,
+            field_id=kind,
+            default_name=kind.replace("_meta_", ""),
+            default_entity_category=EntityCategory.DIAGNOSTIC,
+        )
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{app_id}_{device_id}")},
