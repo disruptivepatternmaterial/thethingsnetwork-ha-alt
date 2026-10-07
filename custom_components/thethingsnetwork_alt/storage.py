@@ -24,13 +24,24 @@ A window holding more than that was read only up to its first thousand
 records, the watermark then moved to "now", and everything after the cut was
 never read. On a restart that made every field show the value it had hours
 earlier, as if it were current.
+
+Reading such a window page by page runs into a fourth: the endpoint is rate
+limited per application (10 requests a minute on The Things Network), and a
+busy application's first fetch needs about that many pages. Spent all at
+once, the allowance ends in HTTP 429 part-way through, the poll fails, and
+every retry starts the same window again. Paging therefore waits for the
+allowance the API advertises, and retries a rate-limited page after the wait
+it asks for.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import json
 import logging
+import math
 from typing import Final, NamedTuple
 
 from aiohttp import ClientError, ClientResponse, ClientTimeout
@@ -84,6 +95,28 @@ _PAGE_OVERLAP: Final = timedelta(seconds=1)
 # PAGE_LIMIT per page this is far beyond one MAX_WINDOW of any real app.
 MAX_PAGES: Final = 100
 
+# The Things Stack's rate-limit headers, sent on every response. Names are
+# matched case-insensitively, as HTTP header names are.
+_AVAILABLE_HEADER: Final = "x-rate-limit-available"
+_RESET_HEADER: Final = "x-rate-limit-reset"
+_RETRY_HEADER: Final = "x-rate-limit-retry"
+
+# Requests left for anything else reading the same application, such as a
+# backfill job sharing its key, before paging pauses for the allowance to
+# refill. Without a reserve the first fetch alone can exhaust it.
+RATE_LIMIT_RESERVE: Final = 2
+
+# How many times one page is retried after HTTP 429 before the poll fails.
+MAX_RATE_LIMITED_RETRIES: Final = 3
+
+# The wait used when a 429 arrives without usable headers: on The Things
+# Network one request's worth of allowance refills in six seconds.
+_DEFAULT_RATE_LIMIT_WAIT: Final = timedelta(seconds=6)
+
+# The longest single wait the headers may impose. The limiter's window is a
+# minute, so a longer one is not believed: the poll fails instead of stalling.
+MAX_RATE_LIMIT_WAIT: Final = timedelta(seconds=60)
+
 # Truncation for anything quoted back from the API into a log line.
 _MAX_QUOTED = 200
 
@@ -97,6 +130,18 @@ class _Page(NamedTuple):
 
     records: int
     last_received_at: datetime | None
+    # The rate-limit headers that came with it; None when absent.
+    available: int | None = None
+    reset: timedelta | None = None
+
+
+class _RateLimited(Exception):
+    """The API answered HTTP 429; ``wait`` is how long it asked us to back off."""
+
+    def __init__(self, wait: timedelta) -> None:
+        """Keep the advised wait."""
+        super().__init__(f"rate limited for {wait.total_seconds():g} s")
+        self.wait = wait
 
 
 class _UnreadableRecord(Exception):
@@ -110,6 +155,11 @@ class _UnreadableRecord(Exception):
         """Keep the receipt time, which paging needs even from a bad record."""
         super().__init__(message)
         self.received_at = received_at
+
+
+async def _wait(duration: timedelta) -> None:
+    """Pause for the rate limiter; a seam so tests need not sleep."""
+    await asyncio.sleep(duration.total_seconds())
 
 
 async def async_validate_credentials(
@@ -166,10 +216,11 @@ class TTNStorageClient:
         values: DATA_TYPE = {}
         after: datetime | None = None
         for _ in range(MAX_PAGES):
-            page = await self._fetch_page(self._url(window, after), values)
+            page = await self._fetch_page_within_limit(self._url(window, after), values)
             if page.records < PAGE_LIMIT:
                 break
             after = self._next_page_after(page, after)
+            await self._wait_for_allowance(page)
         else:
             raise TTNStorageError(
                 f"the storage API was still returning full pages after "
@@ -180,6 +231,47 @@ class TTNStorageClient:
         # Anything raised above leaves the watermark where it was.
         self._read_through = issued_at
         return values
+
+    async def _fetch_page_within_limit(self, url: str, values: DATA_TYPE) -> _Page:
+        """Fetch one page, retrying it after each HTTP 429 the API sends.
+
+        A rate-limited response is rejected before any record is folded into
+        ``values``, so a retry re-reads the page from nothing.
+        """
+        for _ in range(MAX_RATE_LIMITED_RETRIES):
+            try:
+                return await self._fetch_page(url, values)
+            except _RateLimited as limited:
+                _LOGGER.info(
+                    "TTN storage API rate limit reached; retrying the page in %g s",
+                    limited.wait.total_seconds(),
+                )
+                await _wait(limited.wait)
+        try:
+            return await self._fetch_page(url, values)
+        except _RateLimited as limited:
+            raise TTNStorageError(
+                f"the storage API was still rate limiting after "
+                f"{MAX_RATE_LIMITED_RETRIES} retries of one page"
+            ) from limited
+
+    @staticmethod
+    async def _wait_for_allowance(page: _Page) -> None:
+        """Pause before the next page when the API's allowance is nearly spent."""
+        if page.available is None or page.available > RATE_LIMIT_RESERVE:
+            return
+        wait = page.reset or _DEFAULT_RATE_LIMIT_WAIT
+        if wait > MAX_RATE_LIMIT_WAIT:
+            raise TTNStorageError(
+                f"the storage API asked for a {wait.total_seconds():g} s wait "
+                f"between pages, longer than {MAX_RATE_LIMIT_WAIT.total_seconds():g} s"
+            )
+        _LOGGER.debug(
+            "%d TTN storage requests left; waiting %g s before the next page",
+            page.available,
+            wait.total_seconds(),
+        )
+        await _wait(wait)
 
     async def _fetch_page(self, url: str, values: DATA_TYPE) -> _Page:
         """Fold one request's records into ``values``."""
@@ -193,7 +285,14 @@ class TTNStorageClient:
             timeout=_TIMEOUT,
         ) as response:
             await self._raise_for_status(response)
-            return await self._consume(response, values)
+            records, last_received_at = await self._consume(response, values)
+            headers = _lower_keys(response.headers)
+            return _Page(
+                records,
+                last_received_at,
+                available=_header_int(headers, _AVAILABLE_HEADER),
+                reset=_header_seconds(headers, _RESET_HEADER),
+            )
 
     @staticmethod
     def _next_page_after(page: _Page, previous: datetime | None) -> datetime:
@@ -242,14 +341,45 @@ class TTNStorageClient:
         """Reject a response that cannot be read, naming which kind it is."""
         if response.status in (401, 403):
             raise TTNAuthError
+        if response.status == 429:
+            raise cls._rate_limited(response)
         if not 200 <= response.status < 300:
             raise TTNStorageError(
                 f"HTTP {response.status} from the storage API"
                 f"{await cls._error_detail(response)}"
             )
 
+    @staticmethod
+    def _rate_limited(response: ClientResponse) -> Exception:
+        """Return what a 429 means: a wait to retry after, or a failure.
+
+        The advised retry is preferred, then the time until the limiter
+        resets, then one refill's worth. A wait beyond MAX_RATE_LIMIT_WAIT is
+        not believed and fails the poll instead.
+        """
+        headers = _lower_keys(response.headers)
+        wait = next(
+            (
+                seconds
+                for seconds in (
+                    _header_seconds(headers, _RETRY_HEADER),
+                    _header_seconds(headers, _RESET_HEADER),
+                )
+                if seconds
+            ),
+            _DEFAULT_RATE_LIMIT_WAIT,
+        )
+        if wait > MAX_RATE_LIMIT_WAIT:
+            return TTNStorageError(
+                f"HTTP 429 from the storage API asking for a {wait.total_seconds():g} s "
+                f"wait, longer than {MAX_RATE_LIMIT_WAIT.total_seconds():g} s"
+            )
+        return _RateLimited(wait)
+
     @classmethod
-    async def _consume(cls, response: ClientResponse, values: DATA_TYPE) -> _Page:
+    async def _consume(
+        cls, response: ClientResponse, values: DATA_TYPE
+    ) -> tuple[int, datetime | None]:
         """Fold a streamed response into ``values``, newest value per field.
 
         Records stream oldest-first, so a later record's value for a field
@@ -262,6 +392,9 @@ class TTNStorageClient:
         here as one worth adding entities for, and the diagnostics they would
         add can never hold a value, since each is read off a parsed value's
         uplink and there are none.
+
+        Returns how many records the response held and the receipt time of
+        the last one that had a readable stamp.
         """
         records = 0
         last_received_at: datetime | None = None
@@ -289,7 +422,7 @@ class TTNStorageClient:
                 len(skipped),
                 skipped[0],
             )
-        return _Page(records, last_received_at)
+        return records, last_received_at
 
     @staticmethod
     def _parse_record(
@@ -362,3 +495,28 @@ class TTNStorageClient:
         message = payload.get("message") if isinstance(payload, dict) else None
         detail = message if isinstance(message, str) else body.strip()
         return f": {detail[:_MAX_QUOTED]}" if detail else ""
+
+
+def _lower_keys(headers: Mapping[str, str]) -> dict[str, str]:
+    """Return headers keyed by lower-cased name."""
+    return {str(name).lower(): value for name, value in headers.items()}
+
+
+def _header_int(headers: Mapping[str, str], name: str) -> int | None:
+    """Return a non-negative integer header, or None when absent or garbled."""
+    try:
+        value = int(headers[name])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _header_seconds(headers: Mapping[str, str], name: str) -> timedelta | None:
+    """Return a header holding a number of seconds, or None when unusable."""
+    try:
+        seconds = float(headers[name])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (
+        timedelta(seconds=seconds) if math.isfinite(seconds) and seconds >= 0 else None
+    )

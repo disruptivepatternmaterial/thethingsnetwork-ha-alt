@@ -23,6 +23,7 @@ from ttn_client import TTNBaseValue
 from ttn_client.parsers import ttn_parse
 from ttn_client.parsers.default import default_parser
 
+from custom_components.thethingsnetwork_alt import storage
 from custom_components.thethingsnetwork_alt.const import (
     CONF_APP_ID,
     DOMAIN,
@@ -43,6 +44,18 @@ def auto_enable_custom_integrations(
 ) -> None:
     """Let Home Assistant load this repo's custom_components/ folder."""
     return
+
+
+@pytest.fixture(autouse=True)
+def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record every rate-limit pause, in seconds, instead of sleeping through it."""
+    recorded: list[float] = []
+
+    async def record(duration: timedelta) -> None:
+        recorded.append(duration.total_seconds())
+
+    monkeypatch.setattr(storage, "_wait", record)
+    return recorded
 
 
 def make_uplink(

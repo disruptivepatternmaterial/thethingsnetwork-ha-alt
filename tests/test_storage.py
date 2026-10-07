@@ -25,8 +25,11 @@ from ttn_client.parsers import ttn_parse
 from custom_components.thethingsnetwork_alt import storage
 from custom_components.thethingsnetwork_alt.storage import (
     FIRST_FETCH,
+    MAX_RATE_LIMIT_WAIT,
+    MAX_RATE_LIMITED_RETRIES,
     MAX_WINDOW,
     PAGE_LIMIT,
+    RATE_LIMIT_RESERVE,
     TTNStorageClient,
     TTNStorageError,
 )
@@ -593,3 +596,182 @@ async def test_records_arriving_during_the_request_are_re_read(
 
     assert dt_util.utcnow() - issued_at == timedelta(seconds=30)
     assert ttn.read_through == issued_at
+
+
+# --- Paging must stay inside the API's rate limit --------------------------
+
+
+def allowance(available: int | str, reset_s: float = 30) -> dict[str, str]:
+    """Return the rate-limit headers TTN sends with a successful response."""
+    return {
+        "X-Rate-Limit-Limit": "10",
+        "X-Rate-Limit-Available": str(available),
+        "X-Rate-Limit-Reset": f"{reset_s:g}",
+        "X-Rate-Limit-Retry": "0",
+    }
+
+
+def rate_limited(**headers: str) -> dict[str, Any]:
+    """Return the keyword arguments for one HTTP 429 response."""
+    return {
+        "status": 429,
+        "text": json.dumps({"code": 8, "message": "rate limit exceeded"}),
+        "headers": headers,
+    }
+
+
+SECOND_PAGE = {
+    "after": (T0 + timedelta(seconds=PAGE_LIMIT - 2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+}
+
+
+def two_pages(mock: AiohttpClientMocker, first_page_headers: dict[str, str]) -> None:
+    """Register a full first page with the given headers, then a short second."""
+    mock.get(URL, params=FIRST_PAGE, text=full_page(20.5), headers=first_page_headers)
+    mock.get(
+        URL,
+        params=SECOND_PAGE,
+        text=stream(make_uplink(stamp(PAGE_LIMIT + 5), {"temperature": 3.7})),
+    )
+
+
+def in_sequence(mock: AiohttpClientMocker, *responses: dict[str, Any]) -> None:
+    """Answer successive requests to URL with ``responses``, in order."""
+    remaining = iter(responses)
+
+    async def next_response(method: str, url: Any, data: Any) -> Any:
+        return AiohttpClientMockResponse(method, url, **next(remaining))
+
+    mock.get(URL, side_effect=next_response)
+
+
+async def test_paging_pauses_when_the_allowance_is_nearly_spent(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """This is the 0.8.3 regression: a busy first fetch ended in HTTP 429.
+
+    The endpoint allows ten requests a minute and a busy application's first
+    fetch needs about that many pages. Spent at once, the allowance ran out
+    part-way, the poll failed, and every retry started the window again, so
+    the entities never came up.
+    """
+    two_pages(aioclient_mock, allowance(RATE_LIMIT_RESERVE, reset_s=42))
+
+    data = await client(hass).fetch_data()
+
+    assert waits == [42.0]
+    assert aioclient_mock.call_count == 2
+    assert data[DEVICE_ID]["temperature"].value == 3.7
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [allowance(RATE_LIMIT_RESERVE + 1), {}, allowance("lots")],
+    ids=["allowance-left", "no-headers", "garbled"],
+)
+async def test_paging_does_not_pause_without_cause(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    waits: list[float],
+    headers: dict[str, str],
+) -> None:
+    """Allowance to spare, or no rate limiting advertised, means no waiting."""
+    two_pages(aioclient_mock, headers)
+
+    await client(hass).fetch_data()
+
+    assert waits == []
+    assert aioclient_mock.call_count == 2
+
+
+async def test_a_rate_limited_page_is_retried_after_the_advised_wait(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """Another reader of the same application can spend the allowance first."""
+    in_sequence(
+        aioclient_mock,
+        rate_limited(**{"X-Rate-Limit-Retry": "12", "X-Rate-Limit-Reset": "48"}),
+        {
+            "text": stream(make_uplink(stamp(0), {"temperature": 3.7})),
+            "headers": allowance(8),
+        },
+    )
+    ttn = client(hass)
+
+    data = await ttn.fetch_data()
+
+    assert waits == [12.0]
+    assert aioclient_mock.call_count == 2
+    assert data[DEVICE_ID]["temperature"].value == 3.7
+    assert ttn.read_through is not None
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_wait"),
+    [
+        ({"X-Rate-Limit-Retry": "0", "X-Rate-Limit-Reset": "9"}, 9.0),
+        ({}, 6.0),
+        ({"x-rate-limit-retry": "15"}, 15.0),
+    ],
+    ids=["reset-when-retry-is-zero", "one-refill-without-headers", "any-case"],
+)
+async def test_the_wait_after_a_429_falls_back_sensibly(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    waits: list[float],
+    headers: dict[str, str],
+    expected_wait: float,
+) -> None:
+    """The advised retry first, then the limiter's reset, then one refill."""
+    in_sequence(aioclient_mock, rate_limited(**headers), {"text": ""})
+
+    await client(hass).fetch_data()
+
+    assert waits == [expected_wait]
+
+
+async def test_persistent_rate_limiting_fails_the_fetch_and_keeps_the_watermark(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """Retries are bounded; the window is re-read on the next poll instead."""
+    aioclient_mock.get(URL, **rate_limited(**{"X-Rate-Limit-Retry": "6"}))
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="still rate limiting"):
+        await ttn.fetch_data()
+
+    assert waits == [6.0] * MAX_RATE_LIMITED_RETRIES
+    assert aioclient_mock.call_count == MAX_RATE_LIMITED_RETRIES + 1
+    assert ttn.read_through is None
+
+
+async def test_an_implausible_wait_after_a_429_fails_instead_of_stalling(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """The limiter's window is a minute; an hour's wait is not believed."""
+    too_long = MAX_RATE_LIMIT_WAIT.total_seconds() * 60
+    aioclient_mock.get(URL, **rate_limited(**{"X-Rate-Limit-Retry": f"{too_long:g}"}))
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="longer than"):
+        await ttn.fetch_data()
+
+    assert waits == []
+    assert aioclient_mock.call_count == 1
+    assert ttn.read_through is None
+
+
+async def test_an_implausible_wait_between_pages_fails_instead_of_stalling(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """The same ceiling applies to the pause before a follow-up page."""
+    too_long = MAX_RATE_LIMIT_WAIT.total_seconds() * 60
+    two_pages(aioclient_mock, allowance(0, reset_s=too_long))
+    ttn = client(hass)
+
+    with pytest.raises(TTNStorageError, match="between pages"):
+        await ttn.fetch_data()
+
+    assert waits == []
+    assert aioclient_mock.call_count == 1
+    assert ttn.read_through is None
