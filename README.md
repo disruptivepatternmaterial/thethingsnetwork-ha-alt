@@ -24,6 +24,22 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.3
+
+- **A restart no longer brings every sensor up with a value from hours
+  earlier.** The TTN Storage API returns at most 1000 records per request,
+  oldest first, and gives no sign that it stopped early. The first fetch
+  after a restart asks for the last 24 hours, so an application sending more
+  than 1000 uplinks a day was read only up to its oldest thousand: each field
+  came up showing whatever it reported at that cut-off, presented as current,
+  and stayed that way until the device's next uplink. The fetch watermark
+  then moved to "now", so everything after the cut-off was never read.
+
+  Every request now asks for the API's page limit explicitly, and a full page
+  is followed by another starting just before its last record, until a page
+  comes back short. A page that cannot advance fails the poll rather than
+  returning partial data, so the window is re-read.
+
 ## Changes in 0.8.2
 
 - **A device with no payload formatter no longer gets entities it can never
