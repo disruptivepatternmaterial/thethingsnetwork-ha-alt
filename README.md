@@ -24,6 +24,25 @@ Same as the official integration:
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.8.5
+
+- **One set of rules for turning field metadata into entity attributes.**
+  The data, binary, GPS-axis and diagnostic sensors each had their own copy
+  of that mapping, and the copies disagreed:
+  - A `suggested_display_precision` on a diagnostic (`_meta_*`) mapping was
+    ignored. It now applies.
+  - An invalid precision warned on a data sensor but was silently dropped on
+    a GPS axis. Every entity type now warns.
+  - An unsupported `device_class`, `state_class` or `entity_category` warned
+    on a binary sensor but was silently dropped on a sensor. Every entity
+    type now warns, so a typo in a payload formatter shows up in the log.
+  - A GPS axis given `friendly_name: ""` ended up with no name; it now falls
+    back to the axis name.
+
+  Precision `0` still means whole numbers, diagnostic sensors still default
+  to the diagnostic category, and metadata re-applied at runtime still clears
+  values the new metadata no longer sets.
+
 ## Changes in 0.8.4
 
 - **0.8.3 could leave every entity unavailable after a restart; 0.8.4 fixes

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
+import logging
 from typing import Final, TypeVar, cast
 
 from ttn_client import (
@@ -13,11 +14,20 @@ from ttn_client import (
     TTNSensorValue,
 )
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import EntityCategory
 
 from .field_defaults import PlatformType, SensorAttrDict, get_field_mapping
+
+_LOGGER = logging.getLogger(__name__)
 
 _SENSOR_ATTR_PREFIX: Final = "_sensor_attr_"
 _ATTR_KEYS: Final[frozenset[str]] = frozenset(
@@ -48,6 +58,91 @@ def parse_enum(enum_cls: type[EnumT], raw: object | None) -> EnumT | None:
     try:
         return enum_cls(str(raw))
     except (ValueError, TypeError):
+        return None
+
+
+def apply_field_metadata(
+    entity: SensorEntity | BinarySensorEntity,
+    attr: Mapping[str, object],
+    *,
+    field_id: str,
+    default_name: str,
+    default_entity_category: EntityCategory | None = None,
+) -> None:
+    """Set every Home Assistant attribute an entity derives from field metadata.
+
+    Every attribute is assigned, including to None, so metadata re-applied at
+    runtime cannot leave a value behind from the previous set. Entities built
+    once get the same treatment, which is why their fallbacks are arguments
+    rather than whatever the attribute held before. A value Home Assistant
+    does not support is reported, the same way for every entity type.
+    """
+    friendly_name = attr.get("friendly_name")
+    entity._attr_name = (  # noqa: SLF001
+        friendly_name
+        if isinstance(friendly_name, str) and friendly_name
+        else default_name
+    )
+    entity._attr_entity_category = (  # noqa: SLF001
+        _parse_or_warn(EntityCategory, attr, "entity_category", field_id)
+        or default_entity_category
+    )
+
+    if isinstance(entity, BinarySensorEntity):
+        entity._attr_device_class = _parse_or_warn(  # noqa: SLF001
+            BinarySensorDeviceClass, attr, "device_class", field_id
+        )
+        return
+
+    unit = attr.get("unit")
+    entity._attr_native_unit_of_measurement = (  # noqa: SLF001
+        unit if isinstance(unit, str) and unit else None
+    )
+    entity._attr_device_class = _parse_or_warn(  # noqa: SLF001
+        SensorDeviceClass, attr, "device_class", field_id
+    )
+    entity._attr_state_class = _parse_or_warn(  # noqa: SLF001
+        SensorStateClass, attr, "state_class", field_id
+    )
+    entity._attr_suggested_display_precision = _parse_precision(  # noqa: SLF001
+        attr.get("suggested_display_precision"), field_id
+    )
+
+
+def _parse_or_warn(
+    enum_cls: type[EnumT], attr: Mapping[str, object], key: str, field_id: str
+) -> EnumT | None:
+    """Parse one metadata value, reporting anything Home Assistant refuses."""
+    raw = attr.get(key)
+    if raw is None or raw == "":
+        return None
+
+    if (parsed := parse_enum(enum_cls, raw)) is not None:
+        return parsed
+
+    _LOGGER.warning("Field %s has unsupported %s=%r", field_id, key, raw)
+    return None
+
+
+def _parse_precision(raw: object, field_id: str) -> int | None:
+    """Return the configured display precision, or None when unusable.
+
+    ``0`` is a legitimate precision — "show this as a whole number" — so it
+    must not be read as "unset" the way a falsy check would.
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, bool):
+        _LOGGER.warning(
+            "Field %s has invalid suggested_display_precision=%r", field_id, raw
+        )
+        return None
+    try:
+        return int(raw)  # type: ignore[call-overload]
+    except (ValueError, TypeError):
+        _LOGGER.warning(
+            "Field %s has invalid suggested_display_precision=%r", field_id, raw
+        )
         return None
 
 
