@@ -10,11 +10,11 @@ Uses domain `thethingsnetwork_alt` so it can coexist with the official integrati
 
 - **Home Assistant 2025.4.0 or newer** (uses the `wind_direction` device class / `measurement_angle` state class and current entity-platform APIs)
 
-Same as the official integration:
+Same as the official integration, plus read access to the device registry for end-device names:
 
 1. TTN Storage integration enabled on your application
 2. Uplink payload formatter that produces a `decoded_payload`
-3. API key with `Read Application Traffic (uplink and downlink)`
+3. API key with `Read Application Traffic (uplink and downlink)` and `View devices in application`
 
 ## HACS install
 
@@ -408,13 +408,12 @@ logger:
 - **Auto-generated friendly names** for fields not explicitly mapped (snake_case → Title Case, with common suffix heuristics like `_mv`, `_ma`, `_c`, `_lux`, `_pct`, `_hpa`, `_dbm`, etc.).
 - **One-time INFO log** on startup listing every field per device, plus which are excluded and which lack an explicit mapping. Search Home Assistant logs for `TTN HA-Alt device=` after a restart.
 
-## Field mappings, exclusions, and device names
+## Field mappings and exclusions
 
-Three JSON files next to the integration code:
+Two JSON files next to the integration code:
 
 - `field_mappings.json` — TTN field name → HA entity type, unit, device_class, friendly name
 - `field_exclusions.json` — TTN field names to **hide** from Home Assistant
-- `device_names.json` — TTN device ID → friendly device name
 
 `field_mappings.json` is a JSON **array**; each entry maps one profile to a list of TTN field names (`keys`). Example for Milesight VS370 occupancy:
 
@@ -457,9 +456,7 @@ After editing, update via HACS and restart. To delete entities that are already 
 
 Without `_sensor_attr` in your TTN decoder, built-in defaults in `field_mappings.json` apply for common Dragino/RAK/VS370 field names. Edit that file to add more.
 
-Device friendly names come from `device_names.json`. Edit that file for your fleet, update via HACS, then reload the integration — all three JSON files are re-read whenever the config entry is set up, and existing devices are renamed at that point.
-
-Edits to `field_mappings.json` reach entities that already exist without any special handling: Home Assistant re-reads each entity's name, device class, unit, entity category and capabilities from the integration every time it loads. A migration pass on setup covers only what an entity cannot do for itself — renaming devices, and removing an entity whose field has been mapped to the other platform (it is recreated on the next uplink). It deliberately does **not** write the entity registry's `name` or `device_class` columns, so a rename or device-class override you set in Settings → Entities is yours and survives restarts.
+Edits to `field_mappings.json` reach entities that already exist without any special handling: Home Assistant re-reads each entity's name, device class, unit, entity category and capabilities from the integration every time it loads. A migration pass on setup removes any entity whose field has been mapped to the other platform (it is recreated on the next uplink). It deliberately does **not** write the entity registry's `name` or `device_class` columns, so a rename or device-class override you set in Settings → Entities is yours and survives restarts.
 
 ## Decoder metadata (optional override)
 
@@ -505,7 +502,16 @@ function decodeUplink(input) {
 
 ## Device names
 
-Devices are named from `device_names.json` (TTN end-device `device_id` → friendly name). Devices without an entry fall back to the raw `device_id`. The file must be a JSON object; a trailing comma after the last entry is tolerated but still invalid JSON.
+End-device friendly names are fetched directly from the TTN Identity Server (`name` on each end device in the console; on TTN Sandbox and TTS Cloud this is queried from the `eu1` Identity Server automatically while uplinks continue to come from your configured cluster). Devices with no name set in TTN use their raw `device_id`. Custom device names set in Home Assistant always take precedence.
+
+Refresh uses standard Home Assistant controls:
+
+- **Automatic:** polled once per hour and on integration setup.
+- **Refresh now:** Settings → Devices & services → The Things Network HA-Alt → ⋮ → **Reload**.
+- **Automation / Developer tools:** run `homeassistant.update_entity` against any entity of the integration.
+- **Disable automatic polling:** Settings → Devices & services → The Things Network HA-Alt → ⋮ → **System options** → **Enable polling for changes**.
+
+If the API key lacks `View devices in application`, existing device names in Home Assistant are kept and a notice is raised under Settings → Repairs.
 
 ## Upstream
 

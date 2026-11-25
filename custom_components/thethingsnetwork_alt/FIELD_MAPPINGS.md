@@ -1,12 +1,11 @@
-# Field mappings, exclusions & device names
+# Field mappings & exclusions
 
-Three JSON files in this folder control entity metadata:
+Two JSON files in this folder control entity metadata:
 
 | File | Purpose |
 |---|---|
 | `field_mappings.json` | TTN field → HA entity profile (unit, device_class, friendly name, platform). |
 | `field_exclusions.json` | TTN fields to **hide** from HA entirely (global or per device). |
-| `device_names.json` | TTN device id → friendly device name. |
 
 **A HACS update overwrites this folder**, including these JSON files — keep your edits in your fork/repo so they survive updates. After edits: HACS update → **restart Home Assistant**.
 
