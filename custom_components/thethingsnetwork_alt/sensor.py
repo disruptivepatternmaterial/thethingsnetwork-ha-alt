@@ -48,7 +48,6 @@ from .helpers import (
     newest_uplink_carrier,
     parse_enum,
 )
-from .metadata import get_device_name
 from .timestamp import is_timestamp_field, parse_ttn_timestamp
 
 _LOGGER = logging.getLogger(__name__)
@@ -147,7 +146,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up TTN sensors from a config entry."""
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.uplinks
+    names = entry.runtime_data.names
     sensors: set[tuple[str, str]] = set()
     data_sensors: dict[tuple[str, str], TtnDataSensor] = {}
     # Latest ``_sensor_attr`` seen for each field, kept across fetch windows.
@@ -167,7 +167,7 @@ async def async_setup_entry(
 
         for device_id, device_uplinks in data.items():
             _remember_decoder_attr(device_id, extract_sensor_attr(device_uplinks))
-            device_name = get_device_name(device_id)
+            device_name = names.name_for(device_id)
 
             # Add per-device diagnostic sensors once.
             for kind in _META_KINDS:

@@ -23,9 +23,10 @@ from ttn_client import TTNBaseValue
 from ttn_client.parsers import ttn_parse
 from ttn_client.parsers.default import default_parser
 
-from custom_components.thethingsnetwork_alt import storage
+from custom_components.thethingsnetwork_alt import registry, storage
 from custom_components.thethingsnetwork_alt.const import (
     CONF_APP_ID,
+    DEVICE_NAME_REFRESH_INTERVAL,
     DOMAIN,
     POLLING_PERIOD_S,
 )
@@ -55,6 +56,7 @@ def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         recorded.append(duration.total_seconds())
 
     monkeypatch.setattr(storage, "_wait", record)
+    monkeypatch.setattr(registry, "_wait", record)
     return recorded
 
 
@@ -128,10 +130,10 @@ class TTNHarness:
     """Drive the real integration through real coordinator polling cycles.
 
     Nothing about the entity or platform layer is mocked: only the network
-    call at the very edge (``TTNStorageClient.fetch_data``) is replaced, so
-    every assertion runs against Home Assistant's own state machine. The
-    client's own behaviour is covered in ``test_storage.py``, which drives
-    it against a mocked HTTP layer instead.
+    calls at the very edge (``TTNStorageClient.fetch_data`` and
+    ``TTNDeviceRegistryClient.fetch_names``) are replaced, so every assertion
+    runs against Home Assistant's own state machine. The clients' own HTTP
+    behaviour is covered in ``test_storage.py`` and ``test_registry.py``.
     """
 
     def __init__(self, hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -139,9 +141,12 @@ class TTNHarness:
         self.hass = hass
         self.entry = entry
         self.fetch_error: Exception | None = None
+        self.names: dict[str, str] = {}
+        self.names_error: Exception | None = None
         self._payload: dict[str, dict[str, TTNBaseValue]] = {}
         self._entry_added = False
         self.fetch_count = 0
+        self.names_fetch_count = 0
 
     async def fetch_data(self) -> dict[str, dict[str, TTNBaseValue]]:
         """Stand in for the storage API call."""
@@ -149,6 +154,13 @@ class TTNHarness:
         if self.fetch_error is not None:
             raise self.fetch_error
         return self._payload
+
+    async def fetch_names(self) -> dict[str, str]:
+        """Stand in for the Identity Server end-device list call."""
+        self.names_fetch_count += 1
+        if self.names_error is not None:
+            raise self.names_error
+        return dict(self.names)
 
     def add_entry(self) -> None:
         """Attach the config entry without setting it up yet."""
@@ -162,6 +174,7 @@ class TTNHarness:
         unique_id: str,
         device_id: str = DEVICE_ID,
         *,
+        device_name: str | None = None,
         suggested_object_id: str | None = None,
     ) -> str:
         """Seed the registry the way an older release would have left it.
@@ -173,7 +186,7 @@ class TTNHarness:
         device = dr.async_get(self.hass).async_get_or_create(
             config_entry_id=self.entry.entry_id,
             identifiers={(DOMAIN, f"{APP_ID}_{device_id}")},
-            name=device_id,
+            name=device_name or device_id,
         )
         return (
             er.async_get(self.hass)
@@ -203,11 +216,26 @@ class TTNHarness:
         )
         await self.hass.async_block_till_done()
 
+    async def poll_names(self) -> None:
+        """Advance time past the hourly device-name refresh interval."""
+        self._payload = {}
+        async_fire_time_changed(
+            self.hass,
+            dt_util.utcnow() + DEVICE_NAME_REFRESH_INTERVAL + timedelta(seconds=1),
+        )
+        await self.hass.async_block_till_done()
+
     async def reload(self, *uplinks: dict[str, Any]) -> None:
         """Restart the config entry, with ``uplinks`` as its first fetch."""
         self._payload = window(*uplinks)
         await self.hass.config_entries.async_reload(self.entry.entry_id)
         await self.hass.async_block_till_done()
+
+    def device_entry(self, device_id: str = DEVICE_ID) -> dr.DeviceEntry | None:
+        """Return the HA device registry entry for ``device_id``."""
+        return dr.async_get(self.hass).async_get_device_by_identifier(
+            (DOMAIN, f"{APP_ID}_{device_id}"), self.entry.entry_id
+        )
 
     def state(self, entity_id: str) -> str | None:
         """Return the current state string, or None when the entity is absent."""
@@ -249,7 +277,7 @@ class TTNHarness:
 
 @pytest.fixture
 def ttn(hass: HomeAssistant) -> Iterator[TTNHarness]:
-    """Yield a harness with ``TTNClient`` replaced at the coordinator seam."""
+    """Yield a harness with storage and registry clients replaced at the seam."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=APP_ID,
@@ -262,13 +290,24 @@ def ttn(hass: HomeAssistant) -> Iterator[TTNHarness]:
     )
     harness = TTNHarness(hass, entry)
 
-    def _client_factory(*args: Any, **kwargs: Any) -> MagicMock:
+    def _storage_factory(*args: Any, **kwargs: Any) -> MagicMock:
         client = MagicMock()
         client.fetch_data = harness.fetch_data
         return client
 
-    with patch(
-        "custom_components.thethingsnetwork_alt.coordinator.TTNStorageClient",
-        side_effect=_client_factory,
+    def _registry_factory(*args: Any, **kwargs: Any) -> MagicMock:
+        client = MagicMock()
+        client.fetch_names = harness.fetch_names
+        return client
+
+    with (
+        patch(
+            "custom_components.thethingsnetwork_alt.coordinator.TTNStorageClient",
+            side_effect=_storage_factory,
+        ),
+        patch(
+            "custom_components.thethingsnetwork_alt.device_names.TTNDeviceRegistryClient",
+            side_effect=_registry_factory,
+        ),
     ):
         yield harness

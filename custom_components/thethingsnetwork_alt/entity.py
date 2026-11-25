@@ -42,6 +42,15 @@ class TTNCachedEntity(CoordinatorEntity[TTNCoordinator]):
         """
         return self._attr_available
 
+    async def async_update(self) -> None:
+        """Refresh uplinks and device names via ``homeassistant.update_entity``."""
+        if not self.enabled:
+            return
+
+        await self.coordinator.async_request_refresh()
+        if runtime_data := getattr(self.coordinator.config_entry, "runtime_data", None):
+            await runtime_data.names.async_request_refresh()
+
 
 class TTNEntity(TTNCachedEntity):
     """Representation of a The Things Network sensor entity."""

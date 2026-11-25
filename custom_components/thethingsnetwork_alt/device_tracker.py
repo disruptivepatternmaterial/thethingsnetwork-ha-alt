@@ -26,7 +26,6 @@ from ttn_client import TTNDeviceTrackerValue
 
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -35,7 +34,6 @@ from .coordinator import TTNConfigEntry, TTNCoordinator
 from .entity import TTNCachedEntity
 from .exclusions import is_excluded
 from .helpers import newest_uplink_carrier, received_at_utc
-from .metadata import get_device_name
 
 # Synthetic field id used for exclusions (exclude it per device in
 # field_exclusions.json to suppress the tracker for that device).
@@ -58,7 +56,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up TTN device trackers from a config entry."""
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.uplinks
+    names = entry.runtime_data.names
     app_id = entry.data[CONF_APP_ID]
     tracked: set[str] = set()
 
@@ -80,7 +79,7 @@ async def async_setup_entry(
                     coordinator=coordinator,
                     app_id=app_id,
                     device_id=device_id,
-                    device_name=get_device_name(device_id),
+                    device_name=names.name_for(device_id),
                 )
             )
             tracked.add(device_id)
@@ -122,14 +121,9 @@ class TtnDeviceTracker(TTNCachedEntity, TrackerEntity):
         self._apply_location_attrs()
 
     async def async_added_to_hass(self) -> None:
-        """Apply cached GPS attrs and the JSON display name on the existing device."""
+        """Apply cached GPS attrs when the entity is added to Home Assistant."""
         await super().async_added_to_hass()
         self._apply_location_attrs()
-        friendly = get_device_name(self._device_id_value)
-        if friendly and self.device_entry and self.device_entry.name != friendly:
-            dr.async_get(self.hass).async_update_device(
-                self.device_entry.id, name=friendly
-            )
 
     @callback
     def _handle_coordinator_update(self) -> None:
