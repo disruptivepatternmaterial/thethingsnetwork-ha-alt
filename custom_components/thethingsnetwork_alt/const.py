@@ -1,5 +1,6 @@
 """The Things Network HA-Alt integration constants."""
 
+from datetime import timedelta
 import json
 from pathlib import Path
 from typing import Final
@@ -14,6 +15,7 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 CONF_APP_ID = "app_id"
 
 POLLING_PERIOD_S = 60
+DEVICE_NAME_REFRESH_INTERVAL: Final = timedelta(hours=1)
 
 # Axes a TTNDeviceTrackerValue is expanded into, one sensor each.
 GPS_COMPONENTS: Final[tuple[str, ...]] = ("latitude", "longitude", "altitude")

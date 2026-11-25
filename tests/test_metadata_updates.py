@@ -10,8 +10,21 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from custom_components.thethingsnetwork_alt import mappings, metadata
-from homeassistant.helpers import entity_registry as er
+from custom_components.thethingsnetwork_alt import mappings
+from custom_components.thethingsnetwork_alt.const import DOMAIN
+from custom_components.thethingsnetwork_alt.device_names import (
+    device_names_forbidden_issue_id,
+)
+from custom_components.thethingsnetwork_alt.registry import (
+    TTNDeviceRegistryError,
+    TTNDeviceRegistryForbidden,
+)
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+)
+from homeassistant.setup import async_setup_component
 
 from .conftest import TTNHarness, make_uplink
 
@@ -268,20 +281,173 @@ async def test_entity_moved_to_the_other_platform_is_not_stranded(
     assert er.async_get(ttn.hass).async_get(EXTI) is None
 
 
-async def test_device_names_are_re_read_on_setup(ttn: TTNHarness) -> None:
-    """device_names.json was cached for the life of the process.
+# --- TTN end-device names and live renames ----------------------------------
 
-    Every other JSON file the integration reads is re-read when the config
-    entry is set up, so renaming a device appeared to do nothing until Home
-    Assistant itself was restarted.
-    """
+
+async def test_ttn_device_name_applied_on_setup(ttn: TTNHarness) -> None:
+    """A name from TTN is applied to a newly discovered device at setup."""
+    ttn.names = {"dev-1": "East Gate Sensor"}
+
     await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
 
-    metadata._DEVICE_NAMES = {"dev-1": "Stale Cached Name"}
+    device = ttn.device_entry()
+    assert device is not None
+    assert device.name == "East Gate Sensor"
+    entity_id = ttn.entity_id_for("dev-1_temperature")
+    assert entity_id == "sensor.east_gate_sensor_temperature"
+    assert ttn.attribute(entity_id, "friendly_name") == "East Gate Sensor Temperature"
 
-    await ttn.reload(make_uplink("2026-09-01T00:05:00Z", {"temperature": 21.5}))
 
-    assert metadata.get_device_name("dev-1") != "Stale Cached Name"
+async def test_ttn_device_rename_applied_on_hourly_refresh(
+    ttn: TTNHarness,
+) -> None:
+    """A rename in TTN reaches an existing HA device on the hourly refresh."""
+    ttn.names = {"dev-1": "East Gate Sensor"}
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    entity_id = ttn.entity_id_for("dev-1_temperature")
+    assert entity_id is not None
+
+    ttn.names = {"dev-1": "West Gate Sensor"}
+    await ttn.poll_names()
+
+    device = ttn.device_entry()
+    assert device is not None
+    assert device.name == "West Gate Sensor"
+    assert ttn.entity_id_for("dev-1_temperature") == entity_id
+    assert ttn.attribute(entity_id, "friendly_name") == "West Gate Sensor Temperature"
+
+
+async def test_update_entity_action_refreshes_device_names(
+    ttn: TTNHarness,
+) -> None:
+    """Calling homeassistant.update_entity also refreshes TTN device names."""
+    assert await async_setup_component(ttn.hass, "homeassistant", {})
+    ttn.names = {"dev-1": "Initial Name"}
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    entity_id = ttn.entity_id_for("dev-1_temperature")
+    assert entity_id is not None
+
+    ttn.names = {"dev-1": "Updated Via Action"}
+    await ttn.hass.services.async_call(
+        "homeassistant",
+        "update_entity",
+        {"entity_id": entity_id},
+        blocking=True,
+    )
+    await ttn.hass.async_block_till_done()
+
+    device = ttn.device_entry()
+    assert device is not None
+    assert device.name == "Updated Via Action"
+
+
+async def test_disabled_polling_suppresses_hourly_name_refresh(
+    ttn: TTNHarness,
+) -> None:
+    """System options 'Enable polling for changes' stops the hourly name poll."""
+    ttn.add_entry()
+    ttn.hass.config_entries.async_update_entry(ttn.entry, pref_disable_polling=True)
+    ttn.names = {"dev-1": "Initial Name"}
+
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    assert ttn.names_fetch_count == 1
+
+    ttn.names = {"dev-1": "Should Not Poll"}
+    await ttn.poll_names()
+
+    assert ttn.names_fetch_count == 1
+    device = ttn.device_entry()
+    assert device is not None
+    assert device.name == "Initial Name"
+
+
+async def test_cleared_ttn_device_name_reverts_to_device_id(
+    ttn: TTNHarness,
+) -> None:
+    """Clearing a device's name in TTN resets its HA device name to the TTN ID."""
+    ttn.names = {"dev-1": "Temporary Name"}
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    assert ttn.device_entry().name == "Temporary Name"
+
+    ttn.names = {}
+    await ttn.poll_names()
+
+    assert ttn.device_entry().name == "dev-1"
+
+
+async def test_user_device_name_override_survives_ttn_rename(
+    ttn: TTNHarness,
+) -> None:
+    """name_by_user set in HA always wins over TTN device renames."""
+    ttn.names = {"dev-1": "TTN Name"}
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    entity_id = ttn.entity_id_for("dev-1_temperature")
+    assert entity_id is not None
+
+    device = ttn.device_entry()
+    assert device is not None
+    dr.async_get(ttn.hass).async_update_device(device.id, name_by_user="My Greenhouse")
+
+    ttn.names = {"dev-1": "Renamed In TTN"}
+    await ttn.poll_names()
+
+    updated = ttn.device_entry()
+    assert updated is not None
+    assert updated.name_by_user == "My Greenhouse"
+    assert updated.name == "Renamed In TTN"
+    assert ttn.attribute(entity_id, "friendly_name") == "My Greenhouse Temperature"
+
+
+async def test_existing_device_name_survives_failed_initial_fetch(
+    ttn: TTNHarness,
+) -> None:
+    """Upgrade/restart with an unreachable Identity Server keeps existing names."""
+    ttn.preregister("sensor", "dev-1_temperature", device_name="Old Name")
+    ttn.names_error = TTNDeviceRegistryError("unreachable")
+
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+
+    device = ttn.device_entry()
+    assert device is not None
+    assert device.name == "Old Name"
+
+
+async def test_forbidden_creates_repair_issue_and_keeps_names_until_resolved(
+    ttn: TTNHarness,
+) -> None:
+    """HTTP 403 keeps existing names and raises a Repairs issue until fixed."""
+    ttn.preregister("sensor", "dev-1_temperature", device_name="Kept Name")
+    ttn.names_error = TTNDeviceRegistryForbidden("missing right")
+
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+
+    issue_id = device_names_forbidden_issue_id(ttn.entry.entry_id)
+    assert ttn.device_entry().name == "Kept Name"
+    assert ir.async_get(ttn.hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    ttn.names_error = None
+    ttn.names = {"dev-1": "Fresh Name"}
+    await ttn.poll_names()
+
+    assert ir.async_get(ttn.hass).async_get_issue(DOMAIN, issue_id) is None
+    assert ttn.device_entry().name == "Fresh Name"
+
+
+async def test_failed_name_fetch_leaves_sensors_available_and_skips_reauth(
+    ttn: TTNHarness,
+) -> None:
+    """A name-sync failure never marks sensors unavailable or triggers reauth."""
+    ttn.names_error = TTNDeviceRegistryForbidden("missing right")
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+
+    assert ttn.state("sensor.dev_1_temperature") == "20.5"
+    assert not ttn.hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+
+    ttn.names_error = TTNDeviceRegistryError("503")
+    await ttn.poll_names()
+
+    assert ttn.state("sensor.dev_1_temperature") == "20.5"
+    assert not ttn.hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
 # --- Upgrading from the pre-0.7.4 GPS axis naming ---------------------------

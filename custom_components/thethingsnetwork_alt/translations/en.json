@@ -23,5 +23,11 @@
         "title": "Connect to The Things Network HA-Alt"
       }
     }
+  },
+  "issues": {
+    "device_names_forbidden": {
+      "description": "The API key for `{app_id}` does not have the **View devices in application** right on The Things Network, so device names cannot be synced. Existing device names in Home Assistant were kept.\n\nGrant **View devices in application** on the API key in the TTN console, then reload the integration.",
+      "title": "API key cannot read TTN device names"
+    }
   }
 }

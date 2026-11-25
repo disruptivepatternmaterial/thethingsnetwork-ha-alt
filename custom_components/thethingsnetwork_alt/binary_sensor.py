@@ -21,7 +21,6 @@ from .field_defaults import (
     value_is_on,
 )
 from .helpers import apply_field_metadata, extract_sensor_attr
-from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +31,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up TTN binary sensors from a config entry."""
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.uplinks
+    names = entry.runtime_data.names
     sensors: dict[tuple[str, str], TtnDataBinarySensor] = {}
     # Latest ``_sensor_attr`` seen for each field, kept across fetch windows.
     # A decoder puts it on the uplinks it chooses, which need not be the ones
@@ -77,7 +77,7 @@ async def async_setup_entry(
                     ttn_value=ttn_value,
                     attr=merge_field_attr(decoder_attr, field_id),
                     decoder_attr=decoder_attr,
-                    device_name=get_device_name(device_id),
+                    device_name=names.name_for(device_id),
                 )
 
         if new_sensors:

@@ -8,13 +8,14 @@ from ttn_client import TTNSensorAttribute
 
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 
-from .const import _INTEGRATION_VERSION, CONF_APP_ID, PLATFORMS, TTN_API_HOST
-from .coordinator import TTNConfigEntry, TTNCoordinator
+from .const import _INTEGRATION_VERSION, CONF_APP_ID, DOMAIN, PLATFORMS, TTN_API_HOST
+from .coordinator import TTNConfigEntry, TTNCoordinator, TTNRuntimeData
+from .device_names import TTNDeviceNameCoordinator, device_names_forbidden_issue_id
 from .exclusions import is_excluded, load_exclusions_summary, reload_exclusions
 from .field_defaults import reload_field_mappings
 from .mappings import _load_field_mappings, get_field_mapping
-from .metadata import load_device_names, reload_device_names
 from .migration import (
     migrate_gps_component_unique_ids,
     seed_field_platforms,
@@ -35,31 +36,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool:
 
     reload_field_mappings()
     reload_exclusions()
-    reload_device_names()
 
-    # The mappings / exclusions / device-name caches each read a JSON file from
-    # disk on first access. Prime them in the executor so the synchronous
-    # accessors used during entity setup, startup logging, and the metadata
-    # migration hit memory instead of doing blocking I/O inside the event loop.
+    # The mappings and exclusions caches each read a JSON file from disk on
+    # first access. Prime them in the executor so the synchronous accessors
+    # used during entity setup, startup logging, and the metadata migration hit
+    # memory instead of doing blocking I/O inside the event loop.
     await hass.async_add_executor_job(_load_field_mappings)
     await hass.async_add_executor_job(load_exclusions_summary)
-    await hass.async_add_executor_job(load_device_names)
 
-    coordinator = TTNCoordinator(hass, entry)
+    uplinks = TTNCoordinator(hass, entry)
+    await uplinks.async_config_entry_first_refresh()
 
-    await coordinator.async_config_entry_first_refresh()
+    names = TTNDeviceNameCoordinator(hass, entry)
+    entry.async_on_unload(names.async_add_listener(names.apply_device_names))
+    await names.async_refresh()
 
-    entry.runtime_data = coordinator
+    entry.runtime_data = TTNRuntimeData(uplinks=uplinks, names=names)
 
     _LOGGER.info(
-        "The Things Network HA-Alt v%s loaded (%d field mappings, %d device names, %s)",
+        "The Things Network HA-Alt v%s loaded (%d field mappings, %d device names [%s], %s)",
         _INTEGRATION_VERSION,
         len(_load_field_mappings()),
-        len(load_device_names()),
+        len(names.data or {}),
+        "TTN" if names.last_update_success else "cached",
         _exclusions_log_line(),
     )
 
-    _log_field_discovery(coordinator.data)
+    _log_field_discovery(uplinks.data)
 
     # Both must run before the platforms start creating entities: one so each
     # field is already assigned to the platform that owned it before this
@@ -88,6 +91,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> bool
     )
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
+    """Clean up repair issues when a config entry is removed."""
+    ir.async_delete_issue(hass, DOMAIN, device_names_forbidden_issue_id(entry.entry_id))
 
 
 def _exclusions_log_line() -> str:

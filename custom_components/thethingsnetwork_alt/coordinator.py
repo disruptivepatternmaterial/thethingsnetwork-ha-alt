@@ -1,5 +1,8 @@
 """The Things Network HA-Alt DataUpdateCoordinator."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import timedelta
 import logging
 
@@ -13,13 +16,23 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import CONF_APP_ID, POLLING_PERIOD_S
+from .device_names import TTNDeviceNameCoordinator
 from .field_defaults import PlatformType, get_field_mapping
 from .helpers import platform_for_value
 from .storage import DATA_TYPE, TTNStorageClient, TTNStorageError
 
 _LOGGER = logging.getLogger(__name__)
 
-type TTNConfigEntry = ConfigEntry[TTNCoordinator]
+
+@dataclass(kw_only=True, slots=True)
+class TTNRuntimeData:
+    """Coordinators attached to a loaded config entry."""
+
+    uplinks: TTNCoordinator
+    names: TTNDeviceNameCoordinator
+
+
+type TTNConfigEntry = ConfigEntry[TTNRuntimeData]
 
 
 class TTNCoordinator(DataUpdateCoordinator[DATA_TYPE]):

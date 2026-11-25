@@ -20,17 +20,10 @@ from .const import (
     legacy_gps_component_field_id,
 )
 from .coordinator import TTNConfigEntry
+from .device_names import ttn_device_id_for_device
 from .field_defaults import get_field_mapping, get_field_platform, merge_field_attr
-from .metadata import get_device_name
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _ttn_device_id_from_identifier(identifier: str, app_id: str) -> str | None:
-    prefix = f"{app_id}_"
-    if identifier.startswith(prefix):
-        return identifier[len(prefix) :]
-    return None
 
 
 def _field_id_from_unique_id(unique_id: str | None, device_id: str) -> str | None:
@@ -53,12 +46,7 @@ def _ttn_device_id_for_entity(
     ):
         return None
 
-    for domain, identifier in device.identifiers:
-        if domain != DOMAIN:
-            continue
-        if ttn_device_id := _ttn_device_id_from_identifier(identifier, app_id):
-            return ttn_device_id
-    return None
+    return ttn_device_id_for_device(device, app_id)
 
 
 def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
@@ -75,7 +63,7 @@ def seed_field_platforms(hass: HomeAssistant, entry: TTNConfigEntry) -> None:
     alone: that mapping is authoritative and is allowed to move a field, which
     is what ``update_registered_entity_metadata`` cleans up after.
     """
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.uplinks
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
     app_id = entry.data[CONF_APP_ID]
@@ -118,7 +106,7 @@ def migrate_gps_component_unique_ids(
     name and the flat field was dropped — so it migrates and the flat field
     gets its own entity on the next poll.
     """
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.uplinks
     data = coordinator.data or {}
 
     gps_parents: dict[str, set[str]] = {}
@@ -179,37 +167,6 @@ def migrate_gps_component_unique_ids(
         )
 
 
-def _update_registered_device_names(
-    device_registry: dr.DeviceRegistry,
-    entry: ConfigEntry,
-) -> None:
-    """Rename TTN devices using device_names.json."""
-    app_id = entry.data[CONF_APP_ID]
-
-    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
-        ttn_device_id: str | None = None
-        for domain, identifier in device.identifiers:
-            if domain != DOMAIN:
-                continue
-            ttn_device_id = _ttn_device_id_from_identifier(identifier, app_id)
-            if ttn_device_id:
-                break
-
-        if not ttn_device_id:
-            continue
-
-        friendly_name = get_device_name(ttn_device_id)
-        if not friendly_name or device.name == friendly_name:
-            continue
-
-        device_registry.async_update_device(device.id, name=friendly_name)
-        _LOGGER.info(
-            "Renamed TTN device %s to %s",
-            ttn_device_id,
-            friendly_name,
-        )
-
-
 def _remove_stale_entity(
     entity_registry: er.EntityRegistry,
     entity_entry: er.RegistryEntry,
@@ -247,17 +204,14 @@ async def update_registered_entity_metadata(
     why Home Assistant never overwrites them. Earlier versions wrote the
     mapped values there, which shadowed the mapping from that point on and
     overwrote the user's choice on every restart. Undoing that is what is left
-    here, alongside the two things no entity can do for itself: renaming
-    devices, and removing an entity whose field has been mapped to the other
-    platform.
+    here, alongside removing an entity whose field has been mapped to the
+    other platform.
 
-    The mapping/device-name caches are reloaded and primed off-loop by
-    ``async_setup_entry`` before this runs, so no file reads happen here.
+    The mapping cache is reloaded and primed off-loop by ``async_setup_entry``
+    before this runs, so no file reads happen here.
     """
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
-
-    _update_registered_device_names(device_registry, entry)
 
     app_id = entry.data[CONF_APP_ID]
 

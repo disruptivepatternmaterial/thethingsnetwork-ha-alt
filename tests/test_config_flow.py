@@ -24,7 +24,14 @@ from .conftest import APP_ID
 
 HOST = "eu1.cloud.thethings.network"
 URL = f"https://{HOST}/api/v3/as/applications/{APP_ID}/packages/storage/uplink_message"
+DEVICES_URL = f"https://{HOST}/api/v3/applications/{APP_ID}/devices"
 INPUT = {CONF_HOST: HOST, CONF_APP_ID: APP_ID, CONF_API_KEY: "a-key"}
+
+
+@pytest.fixture(autouse=True)
+def mock_device_registry_list(aioclient_mock: AiohttpClientMocker) -> None:
+    """Stub the Identity Server device list for flows that proceed to setup."""
+    aioclient_mock.get(DEVICES_URL, text="{}")
 
 
 async def submit(hass: HomeAssistant, **overrides: Any) -> dict[str, Any]:
