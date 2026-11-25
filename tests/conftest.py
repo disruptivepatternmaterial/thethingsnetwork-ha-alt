@@ -233,8 +233,16 @@ class TTNHarness:
 
     def device_entry(self, device_id: str = DEVICE_ID) -> dr.DeviceEntry | None:
         """Return the HA device registry entry for ``device_id``."""
-        return dr.async_get(self.hass).async_get_device_by_identifier(
-            (DOMAIN, f"{APP_ID}_{device_id}"), self.entry.entry_id
+        identifier = (DOMAIN, f"{APP_ID}_{device_id}")
+        return next(
+            (
+                device
+                for device in dr.async_entries_for_config_entry(
+                    dr.async_get(self.hass), self.entry.entry_id
+                )
+                if identifier in device.identifiers
+            ),
+            None,
         )
 
     def state(self, entity_id: str) -> str | None:

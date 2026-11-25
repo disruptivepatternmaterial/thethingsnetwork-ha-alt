@@ -16,8 +16,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONF_APP_ID, DOMAIN, POLLING_PERIOD_S
-from .device_names import TTNDeviceNameCoordinator
+from .const import CONF_APP_ID, POLLING_PERIOD_S
+from .device_names import TTNDeviceNameCoordinator, ttn_device_id_for_device
 from .field_defaults import PlatformType, get_field_mapping
 from .helpers import platform_for_value
 from .storage import DATA_TYPE, TTNStorageClient, TTNStorageError
@@ -131,21 +131,26 @@ class TTNCoordinator(DataUpdateCoordinator[DATA_TYPE]):
         if runtime_data is None:
             return
 
-        device_registry = dr.async_get(self.hass)
-        needs_refresh = False
-        for device_id in measurements:
-            if device_id in self._probed_unknown_devices:
-                continue
-            if runtime_data.names.name_for(device_id) is not None:
-                self._probed_unknown_devices.add(device_id)
-                continue
-            existing = device_registry.async_get_device_by_identifier(
-                (DOMAIN, f"{self._app_id}_{device_id}"),
-                self.config_entry.entry_id,
+        unseen = [
+            device_id
+            for device_id in measurements
+            if device_id not in self._probed_unknown_devices
+            and runtime_data.names.name_for(device_id) is None
+        ]
+        self._probed_unknown_devices.update(measurements)
+        if not unseen:
+            return
+
+        # async_get_device_by_identifier only exists from HA 2026.8; scanning
+        # this entry's devices works on every version hacs.json allows.
+        registered = {
+            ttn_device_id
+            for device in dr.async_entries_for_config_entry(
+                dr.async_get(self.hass), self.config_entry.entry_id
             )
-            self._probed_unknown_devices.add(device_id)
-            if existing is None:
-                needs_refresh = True
+            if (ttn_device_id := ttn_device_id_for_device(device, self._app_id))
+        }
+        needs_refresh = any(device_id not in registered for device_id in unseen)
 
         if needs_refresh:
             await runtime_data.names.async_refresh()

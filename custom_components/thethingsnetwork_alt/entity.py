@@ -47,9 +47,11 @@ class TTNCachedEntity(CoordinatorEntity[TTNCoordinator]):
         if not self.enabled:
             return
 
-        await self.coordinator.async_request_refresh()
+        # Names first, so any entity the uplink refresh creates is named from
+        # the fresh map rather than the one fetched up to an hour ago.
         if runtime_data := getattr(self.coordinator.config_entry, "runtime_data", None):
             await runtime_data.names.async_request_refresh()
+        await self.coordinator.async_request_refresh()
 
 
 class TTNEntity(TTNCachedEntity):

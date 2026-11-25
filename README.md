@@ -24,6 +24,11 @@ Same as the official integration, plus read access to the device registry for en
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.9.1
+
+- **Fixed uplink polling on Home Assistant older than 2026.8.** 0.9.0 called `async_get_device_by_identifier`, which only exists from HA 2026.8; on older versions the first poll after a new or unnamed device appeared failed and every entity stopped updating.
+- **`homeassistant.update_entity` now refreshes device names before uplinks**, so an entity it creates takes the current TTN name.
+
 ## Changes in 0.9.0
 
 - **Device names are fetched directly from The Things Network and kept in sync** ([#12](https://github.com/disruptivepatternmaterial/thethingsnetwork-ha-alt/issues/12)). `device_names.json` is retired:
