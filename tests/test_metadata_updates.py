@@ -450,6 +450,48 @@ async def test_failed_name_fetch_leaves_sensors_available_and_skips_reauth(
     assert not ttn.hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
+async def test_newly_provisioned_device_uplinking_mid_hour_fetches_its_name_once(
+    ttn: TTNHarness,
+) -> None:
+    """A brand-new device uplinking between hourly polls gets its TTN name immediately."""
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+    assert ttn.names_fetch_count == 1
+
+    # Provision a named dev-2 and an unnamed dev-3 in TTN mid-hour.
+    ttn.names = {"dev-2": "Barn Sensor"}
+    await ttn.poll(
+        make_uplink("2026-09-01T00:01:00Z", {"temperature": 18.0}, "dev-2"),
+        make_uplink("2026-09-01T00:01:00Z", {"temperature": 19.0}, "dev-3"),
+    )
+
+    assert ttn.names_fetch_count == 2
+    dev2 = ttn.device_entry("dev-2")
+    assert dev2 is not None and dev2.name == "Barn Sensor"
+    assert ttn.entity_id_for("dev-2_temperature") == "sensor.barn_sensor_temperature"
+
+    # Subsequent uplinks from unnamed dev-3 do not re-poll the Identity Server.
+    await ttn.poll(
+        make_uplink("2026-09-01T00:02:00Z", {"temperature": 19.5}, "dev-3"),
+    )
+    assert ttn.names_fetch_count == 2
+
+
+async def test_removing_config_entry_clears_forbidden_repair_issue(
+    ttn: TTNHarness,
+) -> None:
+    """Deleting a config entry cleans up its device_names_forbidden Repairs issue."""
+    ttn.names_error = TTNDeviceRegistryForbidden("missing right")
+    await ttn.start(make_uplink("2026-09-01T00:00:00Z", {"temperature": 20.5}))
+
+    issue_id = device_names_forbidden_issue_id(ttn.entry.entry_id)
+    assert ir.async_get(ttn.hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    assert await ttn.hass.config_entries.async_remove(ttn.entry.entry_id)
+    await ttn.hass.async_block_till_done()
+
+    assert ir.async_get(ttn.hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 # --- Upgrading from the pre-0.7.4 GPS axis naming ---------------------------
 
 GPS_UPLINK = make_uplink(

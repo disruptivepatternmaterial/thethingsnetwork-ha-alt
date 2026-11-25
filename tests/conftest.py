@@ -23,7 +23,7 @@ from ttn_client import TTNBaseValue
 from ttn_client.parsers import ttn_parse
 from ttn_client.parsers.default import default_parser
 
-from custom_components.thethingsnetwork_alt import storage
+from custom_components.thethingsnetwork_alt import registry, storage
 from custom_components.thethingsnetwork_alt.const import (
     CONF_APP_ID,
     DEVICE_NAME_REFRESH_INTERVAL,
@@ -56,6 +56,7 @@ def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         recorded.append(duration.total_seconds())
 
     monkeypatch.setattr(storage, "_wait", record)
+    monkeypatch.setattr(registry, "_wait", record)
     return recorded
 
 

@@ -64,6 +64,8 @@ def make_client(
         ("au1.cloud.thethings.network", "eu1.cloud.thethings.network"),
         ("eu1.cloud.thethings.network", "eu1.cloud.thethings.network"),
         ("NAM1.Cloud.TheThings.Network", "eu1.cloud.thethings.network"),
+        ("https://nam1.cloud.thethings.network/", "eu1.cloud.thethings.network"),
+        ("nam1.cloud.thethings.network:443", "eu1.cloud.thethings.network"),
         (
             "acme.nam1.cloud.thethings.industries",
             "acme.eu1.cloud.thethings.industries",
@@ -234,3 +236,62 @@ async def test_connection_failure_raises_general_registry_error_without_key(
         await make_client(hass).fetch_names()
 
     assert API_KEY not in str(exc_info.value)
+
+
+async def test_app_id_with_reserved_url_chars_is_percent_encoded(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Special characters in app_id cannot inject path or query segments."""
+    encoded_url = f"https://{IS_HOST}/api/v3/applications/app%2F1%3Fx%3D2/devices"
+    aioclient_mock.get(encoded_url, text="{}")
+
+    client = TTNDeviceRegistryClient(
+        hass, "nam1.cloud.thethings.network", "app/1?x=2", API_KEY
+    )
+    assert await client.fetch_names() == {}
+    assert aioclient_mock.call_count == 1
+
+
+async def test_429_retries_after_advised_wait_and_succeeds(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """A transient HTTP 429 backs off for X-Rate-Limit-Retry and retries."""
+    responses = [
+        AiohttpClientMockResponse(
+            "GET",
+            BASE_URL,
+            status=429,
+            text='{"message":"rate_limited"}',
+            headers={"X-Rate-Limit-Retry": "4"},
+        ),
+        AiohttpClientMockResponse(
+            "GET",
+            BASE_URL,
+            status=200,
+            text=page_body(device("dev-1", "Recovered Sensor")),
+        ),
+    ]
+
+    async def sequence(method: str, url: Any, data: Any) -> Any:
+        return responses.pop(0)
+
+    aioclient_mock.get(BASE_URL, side_effect=sequence)
+
+    assert await make_client(hass).fetch_names() == {"dev-1": "Recovered Sensor"}
+    assert waits == [4.0]
+
+
+async def test_429_exceeding_max_wait_fails_without_sleeping(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, waits: list[float]
+) -> None:
+    """An unreasonable Retry header fails immediately rather than stalling."""
+    aioclient_mock.get(
+        BASE_URL,
+        status=429,
+        headers={"X-Rate-Limit-Retry": "120"},
+    )
+
+    with pytest.raises(TTNDeviceRegistryError, match="longer than 60 s"):
+        await make_client(hass).fetch_names()
+
+    assert waits == []

@@ -13,9 +13,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONF_APP_ID, POLLING_PERIOD_S
+from .const import CONF_APP_ID, DOMAIN, POLLING_PERIOD_S
 from .device_names import TTNDeviceNameCoordinator
 from .field_defaults import PlatformType, get_field_mapping
 from .helpers import platform_for_value
@@ -42,25 +43,29 @@ class TTNCoordinator(DataUpdateCoordinator[DATA_TYPE]):
 
     def __init__(self, hass: HomeAssistant, entry: TTNConfigEntry) -> None:
         """Initialize my coordinator."""
+        app_id = str(entry.data[CONF_APP_ID])
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
-            name=f"TheThingsNetworkAlt_{entry.data[CONF_APP_ID]}",
+            name=f"TheThingsNetworkAlt_{app_id}",
             update_interval=timedelta(
                 seconds=POLLING_PERIOD_S,
             ),
         )
+        self._app_id = app_id
 
         self._client = TTNStorageClient(
             hass,
             entry.data[CONF_HOST],
-            entry.data[CONF_APP_ID],
+            app_id,
             entry.data[CONF_API_KEY],
         )
 
-        # Which platform owns each (device_id, field_id). See claim_field.
+        # Which platform owns each (device_id, field_id). See resolve_platform.
         self._field_platforms: dict[tuple[str, str], PlatformType] = {}
+        # Devices whose first-seen uplink already triggered an on-demand name check.
+        self._probed_unknown_devices: set[str] = set()
 
     def resolve_platform(
         self, device_id: str, field_id: str, ttn_value: object
@@ -108,6 +113,39 @@ class TTNCoordinator(DataUpdateCoordinator[DATA_TYPE]):
             # its watermark alone on failure, so the next poll asks for this
             # window again rather than skipping past it.
             raise UpdateFailed(f"Error fetching TTN data: {err}") from err
-        else:
-            _LOGGER.debug("fetched data: %s", measurements)
-            return measurements
+
+        await self._refresh_names_for_unseen_devices(measurements)
+        _LOGGER.debug("fetched data: %s", measurements)
+        return measurements
+
+    async def _refresh_names_for_unseen_devices(self, measurements: DATA_TYPE) -> None:
+        """Fetch names once when a brand-new device uplinks between hourly polls.
+
+        Entity IDs are slugged from the device name at initial registration, so
+        refreshing before the platform listeners create entities gives a newly
+        provisioned device its TTN friendly name in its entity IDs immediately.
+        """
+        if not measurements:
+            return
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        if runtime_data is None:
+            return
+
+        device_registry = dr.async_get(self.hass)
+        needs_refresh = False
+        for device_id in measurements:
+            if device_id in self._probed_unknown_devices:
+                continue
+            if runtime_data.names.name_for(device_id) is not None:
+                self._probed_unknown_devices.add(device_id)
+                continue
+            existing = device_registry.async_get_device_by_identifier(
+                (DOMAIN, f"{self._app_id}_{device_id}"),
+                self.config_entry.entry_id,
+            )
+            self._probed_unknown_devices.add(device_id)
+            if existing is None:
+                needs_refresh = True
+
+        if needs_refresh:
+            await runtime_data.names.async_refresh()
