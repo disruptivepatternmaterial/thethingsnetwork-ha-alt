@@ -24,6 +24,15 @@ Same as the official integration, plus read access to the device registry for en
 4. Restart Home Assistant
 5. Settings → Devices & services → Add integration → **The Things Network HA-Alt**
 
+## Changes in 0.9.0
+
+- **Device names are fetched directly from The Things Network and kept in sync** ([#12](https://github.com/disruptivepatternmaterial/thethingsnetwork-ha-alt/issues/12)). `device_names.json` is retired:
+  - End-device friendly names (`name` in the TTN console) are read from the TTN Identity Server on setup, once per hour, when a newly provisioned device sends its first uplink, and whenever `homeassistant.update_entity` or integration **Reload** runs.
+  - On TTN Sandbox and TTS Cloud, the `eu1` Identity Server hostname is derived automatically while uplink storage continues to poll your configured regional cluster.
+  - Existing Home Assistant device names are seeded before the first fetch so an Identity Server outage or a key missing `View devices in application` keeps current names intact; HTTP 403 raises a Settings → Repairs notice instead of prompting for re-authentication.
+  - Custom device names set in Home Assistant (`name_by_user`) always take precedence.
+- **Hassfest requirement fix:** `manifest.json` now specifies `ttn-client>=1.3.0` instead of an exact pin so Home Assistant core upgrades are not blocked.
+
 ## Changes in 0.8.5
 
 - **One set of rules for turning field metadata into entity attributes.**
